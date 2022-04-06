@@ -6,10 +6,13 @@ import pandas as pd
 from pathlib import Path
 
 print("Please save & close the file before pasting the path. Enter CSV full file path.")
-filePath = input("Please add .csv at the end if not already pasted: ")
+userinputFilePath = input("Please add .csv at the end if not already pasted: ")
 
-fileName = Path(filePath)
-# print(fileName)
+# truncating double quotes if any
+formattedFilePath = userinputFilePath.strip('"')
+
+# getting OS generated file Path
+fileName = Path(formattedFilePath)
 
 dataframe = pd.read_csv(fileName, index_col=0)
 
