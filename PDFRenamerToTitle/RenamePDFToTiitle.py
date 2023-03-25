@@ -35,6 +35,10 @@ def rename_pdf_files():
     # Get a list of all the PDF files in the directory
     filenames = [filename for filename in os.listdir('.') if filename.endswith('.pdf')]
 
+    # Create empty lists to store the filenames of the PDF files that were renamed successfully and the ones that failed to rename
+    succeded = []
+    failed = []
+
     # Check if there are any PDF files in the directory
     if not filenames:
         print('No PDF files found.')
@@ -75,12 +79,24 @@ def rename_pdf_files():
                     # rename the file
                     os.rename(filename, new_filename)
                     print(f'Renamed {filename} to {new_filename}')
+                    succeded.append(filename)
                     print('----------------------------------------\n')
                     continue
             except:
                 print(f'Error renaming {filename}')
+                failed.append(filename)
                 print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n')
                 continue
+    
+    # Print the filenames of the PDF files that were renamed successfully and the ones that failed to rename
+    if succeded:
+        print(f'Renamed {len(succeded)} PDF file(s) successfully.')
+    if failed:
+        print(f'Failed to rename {len(failed)} PDF file(s): ')
+        for counter, failedfilename in enumerate(failed, start=1):
+            print(f'{counter}. {failedfilename}')
+
+    input('Press any key to continue...')
 
 # Check if a string contains a hyperlink
 def contains_hyperlink(string):
@@ -90,4 +106,3 @@ def contains_hyperlink(string):
 # Run the script
 if __name__ == '__main__':
     rename_pdf_files()
-    input('Press any key to continue...')
