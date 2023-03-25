@@ -9,8 +9,17 @@
 # Special thanks to chatGPT, BingAi and GitHub Copilot for their immense help with this script
 # And also to the StackOverflow community for their help with the regex
 
-# To run this script, you need to install PyPDF2 using pip or pip3 by running the following command in the terminal
+# [ATTENTION!]
+# To run this script, you MUST NEED to install PyPDF2 using pip or pip3 by running the following command in the terminal
 # pip install PyPDF2
+
+# [ATTENTION!]
+# To successfully run this script, KEEP THE PDF FILES IN THE SAME DIRECTORY AS THE SCRIPT
+# The script will NOT WORK if the PDF files are in a different directory
+
+# [NOTE!]
+# if the program escapes the loop before renaming all the PDF files, then kindly run the script again
+
 
 import os
 import re
@@ -35,7 +44,8 @@ def rename_pdf_files():
         # enumerate the filenames with a counter starting at 1
         for counter, filename in enumerate(filenames, start=1):
             print(f'{counter}. {filename}')
-    
+        print('Renaming PDF files...\n')
+
     for filename in filenames:
             try:
                 # with open(filename, 'rb') as f: # for python 3.6 and below use this line
@@ -65,9 +75,11 @@ def rename_pdf_files():
                     # rename the file
                     os.rename(filename, new_filename)
                     print(f'Renamed {filename} to {new_filename}')
+                    print('----------------------------------------\n')
                     continue
             except:
                 print(f'Error renaming {filename}')
+                print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n')
                 continue
 
 # Check if a string contains a hyperlink
@@ -78,3 +90,4 @@ def contains_hyperlink(string):
 # Run the script
 if __name__ == '__main__':
     rename_pdf_files()
+    input('Press any key to continue...')
