@@ -47,12 +47,18 @@ def rename_pdf_files():
                             pageObj = pdf.pages[0]
                             text = pageObj.extract_text()
                             lines = text.splitlines()
-                            title = lines[0] # assuming the first line of the first page is the title
-                    
+                            # if the first line contains a hyperlink then the title is the second line
+                            if contains_hyperlink(lines[0]):
+                                title = lines[1]
+                            else:
+                                title = lines[0] # assuming the first line of the first page is the title
+                            print(f'Extracted title: {title} from {filename}')
+                                            
                     # remove special characters from the title and replace them with an underscore
                     title = re.sub(r'[^\w\s-]', ' _', title)
                     # remove multiple spaces
                     title = re.sub(r'\s+', ' ', title)
+                    # create the new filename
                     new_filename = f'{title}.pdf'
                     # close the file before renaming it
                     f.close()
@@ -63,6 +69,11 @@ def rename_pdf_files():
             except:
                 print(f'Error renaming {filename}')
                 continue
+
+# Check if a string contains a hyperlink
+def contains_hyperlink(string):
+    regex = r"(?i)\b((?:https?://|www\d{0,3}[.]|[a-z0-9.\-]+[.][a-z]{2,4}/)(?:[^\s()<>]+|\(([^\s()<>]+|(\([^\s()<>]+\)))*\))+(?:\(([^\s()<>]+|(\([^\s()<>]+\)))*\)|[^\s`!()\[\]{};:'\".,<>?«»“”‘’]))"
+    return bool(re.search(regex, string))
 
 # Run the script
 if __name__ == '__main__':
