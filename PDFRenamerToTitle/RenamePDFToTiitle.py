@@ -42,6 +42,7 @@ def rename_pdf_files():
     # Check if there are any PDF files in the directory
     if not filenames:
         print('No PDF files found.')
+        input('Press any key to continue...')
         return
     else:
         print(f"Found {len(filenames)} PDF file(s) with name(s): ")
@@ -61,7 +62,11 @@ def rename_pdf_files():
                             pageObj = pdf.pages[0]
                             text = pageObj.extract_text()
                             lines = text.splitlines()
-                            # if the first line contains a hyperlink then the title is the second line
+                            if not lines: # if the first page is empty then skip the file
+                                print(f'No title found in {filename}')
+                                print('----------------------------------------\n')
+                                continue
+                            # if the first line contains a hyperlink then the title could be the second line
                             if contains_hyperlink(lines[0]):
                                 title = lines[1]
                             else:
