@@ -27,10 +27,8 @@ from PyPDF2 import PdfReader
 
 def rename_pdf_files():
     # Get the directory of the script
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script_dir = os.getcwd()
     print(f'Checking in directory: {script_dir} for PDF files... ')
-    # Change the working directory to the script directory
-    os.chdir(script_dir)
 
     # Get a list of all the PDF files in the directory
     filenames = [filename for filename in os.listdir('.') if filename.endswith('.pdf')]
