@@ -51,6 +51,6 @@ for i in range(1, current_flashcard_groups+1):  # Adjust the range as needed
     # Download each image
     for j, img in enumerate(images):
         url = img.get_attribute('src')
-        urllib.request.urlretrieve(url, f'{folder}/flashcard_{j}.jpg')
+        urllib.request.urlretrieve(url, f'{folder}/flashcard_{j}.png')
 
 driver.quit()  # Close the browser when done
