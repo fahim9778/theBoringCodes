@@ -80,6 +80,18 @@ def rename_pdf_files():
                     # close the file before renaming it
                     f.close()
                     # rename the file
+                    # Check if the new filename already exists in the directory
+                    # If it does then add a number to the end of the filename
+                    # For example, if the filename is 'abc.pdf' and the new filename is 'abc.pdf' then rename the file to 'abc_1.pdf'
+                    if os.path.exists(new_filename):
+                        counter = 0
+                        while True:
+                            counter += 1
+                            updated_filename = f'{title}_{counter}.pdf'
+                            if updated_filename not in filenames:
+                                new_filename = updated_filename
+                                break
+
                     os.rename(filename, new_filename)
                     print(f'Renamed {filename} to {new_filename}')
                     succeded.append(filename)
