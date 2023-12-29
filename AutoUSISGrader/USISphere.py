@@ -83,7 +83,7 @@ with open(log_file_path, "w") as log_file:
 
         found = False
         # Adjust the range as needed
-        for portal_row in range(2, len(df) + 1):
+        for portal_row in range(2, len(df) + 2): # Iterate over each row of the portal table, ensures this checks all rows in the portal
             # Construct the XPath for the student ID on the portal
             xpath_id = f"/html/body/div[2]/div[1]/div[2]/div/div[3]/div[3]/div/table/tbody/tr[{portal_row}]/td[4]"
             
