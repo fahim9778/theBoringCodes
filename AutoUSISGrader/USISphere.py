@@ -16,12 +16,17 @@ from webdriver_manager.firefox import GeckoDriverManager
 def create_log_file(excel_base_name, unmatched_students):
     # Check if there are any unmatched students
     if not unmatched_students:
-        return  # No unmatched students, no need to create a log file
+        return
 
-    # Create the log file name
+    # Get the directory where the script is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Create the log file name with the current date and time
     current_time = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_file_name = f"unmatched_students_log__{current_time}_{excel_base_name}.txt"
-    log_file_path = os.path.join(os.getcwd(), log_file_name)
+    log_file_name = f"unmatched_students_log_{excel_base_name}_{current_time}.txt"
+
+    # Construct the full path for the log file in the script directory
+    log_file_path = os.path.join(script_dir, log_file_name)
 
     # Check if the log file already exists
     file_mode = 'a' if os.path.exists(log_file_path) else 'w'
@@ -110,7 +115,10 @@ for index, excel_row in df.iterrows():
                 # Construct the XPath for the grade cell (not the input field yet)
                 xpath_grade_cell = f"/html/body/div[2]/div[1]/div[2]/div/div[3]/div[3]/div/table/tbody/tr[{portal_row}]/td[7]"
                 grade_cell_element = driver.find_element(By.XPATH, xpath_grade_cell)
-                
+
+                # Scroll the element into view
+                driver.execute_script("arguments[0].scrollIntoView(true);", grade_cell_element)
+
                 # Click the grade cell to make it editable
                 grade_cell_element.click()
                 
