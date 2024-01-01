@@ -102,6 +102,16 @@ def on_main_window_close():
             is_browser_open = False
     root.destroy()
 
+def check_browser_status():
+    global is_browser_open, driver
+    try:
+        if driver and driver.title:  # Attempt to get the title of the current page
+            root.after(1000, check_browser_status)  # Re-check after 1 second
+    except:
+        is_browser_open = False
+        print("Browser has been closed by the user.")
+        # root.destroy()
+
 # Create a queue for inter-thread communication
 url_queue = queue.Queue()
 
@@ -126,11 +136,28 @@ def update_text_messages(message, tag=None):
 def clear_file_path():
     entry_file_path.delete(0, tk.END)
 
+def browse_file():
+    # Clear the entry field before inserting the new file path
+    entry_file_path.delete(0, tk.END)
+    file_path = filedialog.askopenfilename()
+    entry_file_path.insert(0, file_path)
+    
+    # Reset the status label text and color
+    label_status.config(text="", foreground="black")
+
 def process_gradesheet():
-    global driver, is_browser_open, gradesheet_url
+    global driver, is_browser_open, gradesheet_url, text_messages
+
+    # Disable buttons and entry field
+    button_browse.config(state='disabled')
+    button_clear.config(state='disabled')
+    button_process.config(state='disabled', text='Processing started, Please wait...')
+    entry_file_path.config(state='disabled')
+    browser_dropdown.config(state='disabled')
 
     # Get values from GUI elements
     excel_path = entry_file_path.get()
+    print(f"Selected File: {excel_path}")  # Debug print
     browser_choice = browser_option.get()
     print(f"Selected Browser: {browser_choice}")  # Debug print
 
@@ -151,6 +178,7 @@ def process_gradesheet():
 
     # Initialize WebDriver
     driver = init_driver(browser_choice)
+    check_browser_status()
 
     # Open the login page
     login_url = 'https://usis.bracu.ac.bd/academia/'  # Replace with your portal's login URL
@@ -171,23 +199,25 @@ def process_gradesheet():
         driver.quit()
         return
     
-    # Add a Text widget for displaying messages
-    label_messages = tk.Label(root, text="Processing Messages:")
-    label_messages.pack()
+    # Check if text_messages already exists
+    if text_messages is None:
+        # Create the text_messages widget if it doesn't exist
+        label_messages = tk.Label(root, text="Processing Messages:")
+        label_messages.pack()
 
-    global text_messages
-    text_messages = tk.Text(root, height=10, width=50, font=("Helvetica", 10))
+        text_messages = tk.Text(root, height=10, width=50, font=("Helvetica", 10))
+        scrollbar = tk.Scrollbar(root, command=text_messages.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text_messages.config(yscrollcommand=scrollbar.set)
+        text_messages.pack()
 
-    # Add a scrollbar to the Text widget
-    scrollbar = tk.Scrollbar(root, command=text_messages.yview)
-    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-    text_messages.config(yscrollcommand=scrollbar.set)
-    text_messages.pack()
+        # Configure a tag for red and bold text
+        text_messages.tag_configure("unmatched", foreground="red", font=("Helvetica", 10, "bold"))
+    else:
+        # Clear the existing text_messages widget
+        text_messages.delete('1.0', tk.END)
 
-    # Configure a tag for red and bold text
-    text_messages.tag_configure("unmatched", foreground="red", font=("Helvetica", 10, "bold"))
-
-    unmatched_students = []
+    unmatched_students = [] # List to store unmatched students
 
     # Process each student's data
     for index, excel_row in df.iterrows():
@@ -240,7 +270,13 @@ def process_gradesheet():
             open_log_file(log_file_path)
         elif user_choice is False:  # User clicked 'No'
             open_log_folder(os.path.dirname(log_file_path))
-
+    
+    # Re-enable buttons and entry field
+    button_browse.config(state='normal')
+    button_clear.config(state='normal')
+    button_process.config(state='normal', text='Start Processing')
+    entry_file_path.config(state='normal')
+    browser_dropdown.config(state='readonly')  # 'readonly' for Combobox
 
     # Update the status label in the main thread at the end of processing
     root.after(0, lambda: label_status.config(text="Processing complete. Review Grades before submit", foreground="green", font=("Helvetica", 10, "bold")))
@@ -267,7 +303,7 @@ button_frame = tk.Frame(root)
 button_frame.pack(pady=5)
 
 # Browse button
-button_browse = tk.Button(button_frame, text="Browse", command=lambda: entry_file_path.insert(0, filedialog.askopenfilename()))
+button_browse = tk.Button(button_frame, text="Browse", command=browse_file)
 button_browse.pack(side=tk.LEFT, padx=5)
 
 # Clear Field button
