@@ -94,7 +94,7 @@ def init_driver(browser_choice):
 def on_main_window_close():
     global is_browser_open, driver
     if is_browser_open:
-        if messagebox.askokcancel("Quit", "The browser maybe still open. Close it and exit?"):
+        if messagebox.askokcancel("Quit", "If the browser window is open, Close it and exit?"):
             try:
                 driver.quit()
             except Exception as e:
@@ -132,6 +132,7 @@ def process_gradesheet():
     # Get values from GUI elements
     excel_path = entry_file_path.get()
     browser_choice = browser_option.get()
+    print(f"Selected Browser: {browser_choice}")  # Debug print
 
     if not excel_path or not browser_choice:
         messagebox.showerror("Error", "Please specify the gradesheet file and browser choice.")
@@ -248,6 +249,10 @@ def process_gradesheet():
 root = tk.Tk()
 root.title("USISphere GUI")
 
+# Set the window icon
+icon_path = 'icon.png'  # Replace with the path to your downloaded icon
+root.iconphoto(False, tk.PhotoImage(file=icon_path))
+
 # Set the size of the main window (width x height)
 root.geometry("600x400")  # Adjust the size as needed
 
@@ -271,12 +276,11 @@ button_clear.pack(side=tk.LEFT, padx=5)
 
 # Browser choice dropdown
 label_browser_choice = tk.Label(root, text="Select Browser:")
-label_browser_choice.pack(pady=(2, 0))  # Add vertical padding above the label
+label_browser_choice.pack(pady=(2, 0))
 browser_option = tk.StringVar(root)
-browser_option.set("Firefox")  # Default value
-browser_dropdown = ttk.Combobox(root, state="readonly", values=("Chrome", "Firefox", "Edge"), width=20)
-browser_dropdown.current(1)  # Set default selection to Firefox
-browser_dropdown.pack(pady=2)  # Add vertical padding around the dropdown
+browser_dropdown = ttk.Combobox(root, textvariable=browser_option, state="readonly", values=("Firefox", "Chrome", "Edge"), width=20)
+browser_dropdown.current(0)  # Set default selection to Firefox
+browser_dropdown.pack(pady=2)
 
 # Process button
 button_process = tk.Button(root, text="Start Processing", command=start_processing_thread)
