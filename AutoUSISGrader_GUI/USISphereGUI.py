@@ -22,7 +22,8 @@ text_messages = None # Declare text_messages as a global variable
 gradesheet_url = None # Declare gradesheet_url as a global variable
 url_entered_event = threading.Event() # Declare url_entered_event as a global variable
 is_browser_open = False # Declare is_browser_open as a global variable to check if the browser is open
-driver = None  # Declare driver as a global variable
+driver = None  # Declare driver as a global variabl
+continue_execution = True  # Global flag to control execution = True # Global flag to control thread execution
 
 
 # Function definitions (create_log_file, init_driver, process_gradesheet)
@@ -79,27 +80,32 @@ def open_log_folder(folder_path):
 
 # Function to initialize the WebDriver based on user choice
 def init_driver(browser_choice):
-    global driver, is_browser_open
-    is_browser_open = True
+    try:
+        if browser_choice.lower() == 'chrome':
+            return webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
+        elif browser_choice.lower() == 'firefox':
+            return webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
+        elif browser_choice.lower() == 'edge':
+            return webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
+    except Exception as e:
+        messagebox.showerror("Error", f"Failed to open {browser_choice}. Is it installed?")
+        return None
 
-    if browser_choice.lower() == 'chrome':
-        return webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
-    elif browser_choice.lower() == 'firefox':
-        return webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
-    elif browser_choice.lower() == 'edge':
-        return webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
-    else:
-        raise ValueError("Unsupported browser. Choose 'Chrome', 'Firefox', or 'Edge'.")
     
 def on_main_window_close():
     global is_browser_open, driver
-    if is_browser_open:
-        if messagebox.askokcancel("Quit", "If the browser window is open, Close it and exit?"):
+
+    if is_browser_open or driver:
+        if messagebox.askokcancel("Quit", "Close the browser and exit?"):
             try:
                 driver.quit()
             except Exception as e:
                 print(f"Error closing browser: {e}")
             is_browser_open = False
+        else:
+            # User chose not to close the application
+            return
+    root.quit()
     root.destroy()
 
 def check_browser_status():
@@ -117,12 +123,29 @@ url_queue = queue.Queue()
 
 def show_url_prompt():
     url_prompt_message = (
-    "Enter the URL of the USIS grade uploading page:\n\n"
-    "IMPORTANT: Please DO NOT interact (click, resize, move, etc.) "
-    "with the browser window while processing is ongoing."
-)
+        "Enter the URL of the USIS grade uploading page:\n\n"
+        "IMPORTANT: Please DO NOT interact (click, resize, move, etc.) "
+        "with the browser window while processing is ongoing."
+    )
     url = simpledialog.askstring("Input", url_prompt_message)
-    url_queue.put(url)  # Put the URL into the queue
+    if url is None:
+        # User clicked Cancel or closed the prompt
+        url_queue.put(None)  # Signal that the operation was canceled
+        return None
+    elif valid_url(url):
+        url_queue.put(url)  # Put the valid URL into the queue
+        return url
+    else:
+        messagebox.showerror("Error", "The entered URL is not a valid USIS mark entry URL.")
+        return show_url_prompt()  # Call the function again for a valid URL
+
+def valid_url(url):
+    expected_url_part = "usis.bracu.ac.bd/academia/dashBoard/show#/academia/studentExamResult/studentExamMarksEntry"
+    return url.startswith("https://") and expected_url_part in url
+
+# def valid_url(url):
+#     expected_url_part = "usis.bracu.ac.bd/academia/dashBoard/show#/academia/studentExamResult/studentExamMarksEntry"
+#     return url.startswith("https://") and expected_url_part in url
 
 def start_processing_thread():
     processing_thread = threading.Thread(target=process_gradesheet)
@@ -137,23 +160,36 @@ def clear_file_path():
     entry_file_path.delete(0, tk.END)
 
 def browse_file():
-    # Clear the entry field before inserting the new file path
-    entry_file_path.delete(0, tk.END)
-    file_path = filedialog.askopenfilename()
-    entry_file_path.insert(0, file_path)
-    
-    # Reset the status label text and color
-    label_status.config(text="", foreground="black")
+    file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
+    if file_path:
+        # Check if the file extension is for Excel files
+        if file_path.lower().endswith(('.xlsx', '.xls')):
+            entry_file_path.delete(0, tk.END)
+            entry_file_path.insert(0, file_path)
+            label_status.config(text="", foreground="black")
+            
+            # Clear the text messages field
+            if text_messages is not None:
+                text_messages.delete('1.0', tk.END)
+        else:
+            messagebox.showerror("Error", "The selected file is not an Excel file.")
 
-def process_gradesheet():
-    global driver, is_browser_open, gradesheet_url, text_messages
+def enable_gui_elements():
+    button_browse.config(state='normal')
+    button_clear.config(state='normal')
+    button_process.config(state='normal', text='Start Processing')
+    entry_file_path.config(state='normal')
+    browser_dropdown.config(state='readonly')
 
-    # Disable buttons and entry field
+def disable_gui_elements():
     button_browse.config(state='disabled')
     button_clear.config(state='disabled')
     button_process.config(state='disabled', text='Processing started, Please wait...')
     entry_file_path.config(state='disabled')
     browser_dropdown.config(state='disabled')
+
+def process_gradesheet():
+    global driver, is_browser_open, gradesheet_url, text_messages, continue_thread_execution
 
     # Get values from GUI elements
     excel_path = entry_file_path.get()
@@ -163,12 +199,17 @@ def process_gradesheet():
 
     if not excel_path or not browser_choice:
         messagebox.showerror("Error", "Please specify the gradesheet file and browser choice.")
+        enable_gui_elements()
         return
 
     # Check if the file exists
     if not os.path.exists(excel_path):
         messagebox.showerror("Error", "The specified file does not exist. Please check the path and try again.")
+        enable_gui_elements()
         return
+
+    # Disable GUI elements
+    disable_gui_elements()
 
     # Read the Excel file into a Pandas DataFrame
     df = pd.read_excel(excel_path)
@@ -178,6 +219,10 @@ def process_gradesheet():
 
     # Initialize WebDriver
     driver = init_driver(browser_choice)
+    if driver is None:
+        # Re-enable GUI elements and return
+        enable_gui_elements()
+        return
     check_browser_status()
 
     # Open the login page
@@ -191,8 +236,12 @@ def process_gradesheet():
     root.after(100, show_url_prompt)
 
     # Wait for the URL from the prompt
-    gradesheet_url = url_queue.get()  # Retrieve the URL from the queue
-    if gradesheet_url:
+    gradesheet_url = url_queue.get()
+    if gradesheet_url is None:
+        # driver.quit()
+        enable_gui_elements()
+        return
+    elif gradesheet_url:
         driver.get(gradesheet_url)
     else:
         messagebox.showerror("Error", "No URL entered. Exiting.")
@@ -270,16 +319,12 @@ def process_gradesheet():
             open_log_file(log_file_path)
         elif user_choice is False:  # User clicked 'No'
             open_log_folder(os.path.dirname(log_file_path))
-    
-    # Re-enable buttons and entry field
-    button_browse.config(state='normal')
-    button_clear.config(state='normal')
-    button_process.config(state='normal', text='Start Processing')
-    entry_file_path.config(state='normal')
-    browser_dropdown.config(state='readonly')  # 'readonly' for Combobox
 
     # Update the status label in the main thread at the end of processing
     root.after(0, lambda: label_status.config(text="Processing complete. Review Grades before submit", foreground="green", font=("Helvetica", 10, "bold")))
+
+    # Re-enable GUI elements
+    enable_gui_elements()
 
 # GUI setup
 root = tk.Tk()
