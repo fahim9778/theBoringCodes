@@ -123,6 +123,9 @@ def update_text_messages(message, tag=None):
     text_messages.insert(tk.END, message + "\n", tag)
     text_messages.see(tk.END)  # Auto-scroll to the end
 
+def clear_file_path():
+    entry_file_path.delete(0, tk.END)
+
 def process_gradesheet():
     global driver, is_browser_open, gradesheet_url
 
@@ -239,7 +242,7 @@ def process_gradesheet():
 
 
     # Update the status label in the main thread at the end of processing
-    root.after(0, lambda: label_status.config(text="Processing complete. Check log for details.", foreground="green"))
+    root.after(0, lambda: label_status.config(text="Processing complete. Review Grades before submit", foreground="green", font=("Helvetica", 10, "bold")))
 
 # GUI setup
 root = tk.Tk()
@@ -249,30 +252,39 @@ root.title("USISphere GUI")
 root.geometry("600x400")  # Adjust the size as needed
 
 # File path entry
-label_file_path = tk.Label(root, text="Gradesheet File Path:")
-label_file_path.pack()
-entry_file_path = tk.Entry(root, width=90)  # Increase the width
-entry_file_path.pack()
-button_browse = tk.Button(root, text="Browse", command=lambda: entry_file_path.insert(0, filedialog.askopenfilename()))
-button_browse.pack()
+label_file_path = tk.Label(root, text="Gradesheet EXCEL File Path:")
+label_file_path.pack(pady=(10, 0))
+entry_file_path = tk.Entry(root, width=90)
+entry_file_path.pack(pady=5)
 
-# Browser choice dropdown using Combobox
+# Frame for buttons
+button_frame = tk.Frame(root)
+button_frame.pack(pady=5)
+
+# Browse button
+button_browse = tk.Button(button_frame, text="Browse", command=lambda: entry_file_path.insert(0, filedialog.askopenfilename()))
+button_browse.pack(side=tk.LEFT, padx=5)
+
+# Clear Field button
+button_clear = tk.Button(button_frame, text="Clear Field", command=clear_file_path)
+button_clear.pack(side=tk.LEFT, padx=5)
+
+# Browser choice dropdown
 label_browser_choice = tk.Label(root, text="Select Browser:")
-label_browser_choice.pack()
-
-# Create a Combobox for browser selection
-browser_option = ttk.Combobox(root, state="readonly", width=20)
-browser_option['values'] = ("Firefox", "Chrome", "Edge")
-browser_option.current(0)  # Set default selection to Firefox
-browser_option.pack()
+label_browser_choice.pack(pady=(2, 0))  # Add vertical padding above the label
+browser_option = tk.StringVar(root)
+browser_option.set("Firefox")  # Default value
+browser_dropdown = ttk.Combobox(root, state="readonly", values=("Chrome", "Firefox", "Edge"), width=20)
+browser_dropdown.current(1)  # Set default selection to Firefox
+browser_dropdown.pack(pady=2)  # Add vertical padding around the dropdown
 
 # Process button
 button_process = tk.Button(root, text="Start Processing", command=start_processing_thread)
-button_process.pack()
+button_process.pack(pady=(2, 2))  # Add vertical padding below the button
 
 # Status label
 label_status = tk.Label(root, text="")
-label_status.pack()
+label_status.pack(pady=(2, 2))  # Add vertical padding around the label
 
 # Bind the close event
 root.protocol("WM_DELETE_WINDOW", on_main_window_close)
