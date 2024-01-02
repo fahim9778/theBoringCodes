@@ -24,7 +24,7 @@ url_entered_event = threading.Event() # Declare url_entered_event as a global va
 is_browser_open = False # Declare is_browser_open as a global variable to check if the browser is open
 driver = None  # Declare driver as a global variabl
 continue_execution = True  # Global flag to control execution = True # Global flag to control thread execution
-
+open_browsers = []  # List to track open browser instances
 
 # Function definitions (create_log_file, init_driver, process_gradesheet)
 
@@ -80,27 +80,38 @@ def open_log_folder(folder_path):
 
 # Function to initialize the WebDriver based on user choice
 def init_driver(browser_choice):
+    global open_browsers
+
+    # Open the new browser based on the choice
     try:
+        new_driver = None
         if browser_choice.lower() == 'chrome':
-            return webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
+            new_driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()))
         elif browser_choice.lower() == 'firefox':
-            return webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
+            new_driver = webdriver.Firefox(service=FirefoxService(GeckoDriverManager().install()))
         elif browser_choice.lower() == 'edge':
-            return webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
+            new_driver = webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
+
+        if new_driver:
+            open_browsers.append(new_driver)  # Add the new driver to the list
+
+        return new_driver
     except Exception as e:
         messagebox.showerror("Error", f"Failed to open {browser_choice}. Is it installed?")
         return None
 
     
 def on_main_window_close():
-    global is_browser_open, driver
+    global is_browser_open, driver, open_browsers
 
-    if is_browser_open or driver:
-        if messagebox.askokcancel("Quit", "Close the browser and exit?"):
-            try:
-                driver.quit()
-            except Exception as e:
-                print(f"Error closing browser: {e}")
+    if open_browsers or is_browser_open or driver:
+        if messagebox.askokcancel("Quit", "Close all browsers and exit?"):
+            for browser in open_browsers:
+                try:
+                    browser.quit()
+                except Exception as e:
+                    print(f"Error closing browser: {e}")
+            open_browsers.clear()
             is_browser_open = False
         else:
             # User chose not to close the application
@@ -143,12 +154,11 @@ def valid_url(url):
     expected_url_part = "usis.bracu.ac.bd/academia/dashBoard/show#/academia/studentExamResult/studentExamMarksEntry"
     return url.startswith("https://") and expected_url_part in url
 
-# def valid_url(url):
-#     expected_url_part = "usis.bracu.ac.bd/academia/dashBoard/show#/academia/studentExamResult/studentExamMarksEntry"
-#     return url.startswith("https://") and expected_url_part in url
 
 def start_processing_thread():
     processing_thread = threading.Thread(target=process_gradesheet)
+    label_status.config(text="", foreground="black")
+    clear_text_messages()
     processing_thread.start()
 
 def update_text_messages(message, tag=None):
@@ -159,6 +169,10 @@ def update_text_messages(message, tag=None):
 def clear_file_path():
     entry_file_path.delete(0, tk.END)
 
+def clear_text_messages():
+    if text_messages is not None:
+        text_messages.delete('1.0', tk.END)
+
 def browse_file():
     file_path = filedialog.askopenfilename(filetypes=[("Excel files", "*.xlsx *.xls")])
     if file_path:
@@ -167,10 +181,7 @@ def browse_file():
             entry_file_path.delete(0, tk.END)
             entry_file_path.insert(0, file_path)
             label_status.config(text="", foreground="black")
-            
-            # Clear the text messages field
-            if text_messages is not None:
-                text_messages.delete('1.0', tk.END)
+            clear_text_messages()
         else:
             messagebox.showerror("Error", "The selected file is not an Excel file.")
 
@@ -370,6 +381,11 @@ button_process.pack(pady=(2, 2))  # Add vertical padding below the button
 # Status label
 label_status = tk.Label(root, text="")
 label_status.pack(pady=(2, 2))  # Add vertical padding around the label
+
+# Footer label with Unicode heart emoji
+footer_text = u"Built with <3 by FGZ - @theBoringCodes"
+footer_label = tk.Label(root, text=footer_text, font=("Helvetica", 10))
+footer_label.pack(side=tk.BOTTOM, pady=(5, 5))  # Adjust padding as needed
 
 # Bind the close event
 root.protocol("WM_DELETE_WINDOW", on_main_window_close)
