@@ -134,7 +134,7 @@ url_queue = queue.Queue()
 
 def show_url_prompt():
     url_prompt_message = (
-        "Enter the URL of the USIS grade uploading page:\n\n"
+        "Enter the URL of the USIS grade uploading page AFTER you loaded the student List:\n\n"
         "IMPORTANT: Please DO NOT interact (click, resize, move, etc.) "
         "with the browser window while processing is ongoing."
     )
@@ -241,7 +241,7 @@ def process_gradesheet():
     driver.get(login_url)
 
     # Manual login message
-    messagebox.showinfo("Login", "Please log in to the portal, Navigate to the Mark Entry page. Then click OK to continue.")
+    messagebox.showinfo("Login", "Please log in to USIS, navigate to the Mark Entry page and Load the student list. \n\nThen click OK to continue.")
 
     # Now schedule the URL prompt to show after login confirmation
     root.after(100, show_url_prompt)
