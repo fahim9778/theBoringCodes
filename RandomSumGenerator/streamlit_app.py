@@ -1,7 +1,7 @@
 import streamlit as st
 from random_sum_generator import RandomSumGenerator
 
-st.set_page_config(page_icon='favicon.png', page_title="🎯 Random Sum Generator", layout="centered")
+st.set_page_config(page_title="🎯 Random Sum Generator", page_icon="favicon.png", layout="centered")
 
 st.title("🎯 Random Sum Generator")
 
@@ -36,6 +36,13 @@ else:
         min_vals.append(min_i)
         max_vals.append(max_i)
 
+# Constraint tip
+st.markdown("""
+ℹ️ **Tip:** For successful generation, make sure:
+- `min_val * parts ≤ total ≤ max_val * parts`
+- It’s usually best if `max_val > total / parts`
+""")
+
 # Generate button
 if st.button("Generate"):
     try:
@@ -48,8 +55,10 @@ if st.button("Generate"):
         st.success(f"Generated List ({mode}):")
         st.write(result)
         st.write(f"Sum: {sum(result)}")
+    except ValueError as ve:
+        st.warning(str(ve))
     except Exception as e:
         st.error(str(e))
 
 st.markdown("---")
-st.markdown("Made with ❤️ by Fakhruddin Gazzali Fahim")
+st.markdown("Made with ❤️ by MD. Gazzali Fahim")

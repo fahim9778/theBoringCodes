@@ -8,10 +8,10 @@ setup(
     long_description_content_type="text/markdown",
     author="Md. Fakhruddin Gazzali Fahim",
     author_email="fahim9778@gmail.com",
-    url="https://github.com/fahim9778/random_sum_generator",
+    url="https://github.com/fahim9778/theBoringCodes/tree/main/RandomSumGenerator",
     project_urls={
-        "Bug Tracker": "https://github.com/fahim9778/random_sum_generator/issues",
-        "Source": "https://github.com/fahim9778/random_sum_generator"
+        "Bug Tracker": "https://github.com/fahim9778/theBoringCodes/issues",
+        "Source": "https://github.com/fahim9778/theBoringCodes/tree/main/RandomSumGenerator"
     },
     packages=find_packages(),
     classifiers=[

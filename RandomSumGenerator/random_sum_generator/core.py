@@ -26,16 +26,24 @@ class RandomSumGenerator:
         min_vals = self._normalize_bounds(min_val, parts, 0)
         max_vals = self._normalize_bounds(max_val, parts, total)
 
+        # 🧠 Feasibility Check
         if sum(min_vals) > total:
             raise ValueError("Sum of min_vals is too high for the given total.")
         if sum(max_vals) < total:
             raise ValueError("Sum of max_vals is too low to reach the total.")
 
+        avg = total / parts
+        if all(isinstance(x, (int, float)) for x in max_vals):
+            tight_upper = all(round(m, 5) <= round(avg, 5) for m in max_vals)
+            if tight_upper:
+                raise ValueError(
+                    f"max_val too tight to generate varied values. Try setting max_val > total/parts = {avg:.2f}"
+                )
+
         for attempt in range(max_attempts):
             raw = [random.gammavariate(1, 1) for _ in range(parts)]
             total_raw = sum(raw)
             proportions = [r / total_raw for r in raw]
-
             scaled = [min_vals[i] + proportions[i] * (max_vals[i] - min_vals[i]) for i in range(parts)]
 
             if mode == 'int':
