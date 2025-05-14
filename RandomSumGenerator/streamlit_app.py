@@ -60,13 +60,19 @@ if "last_run" in st.session_state:
 
         result_str = str(result)
 
+        # After result is generated
+        if mode == 'int':
+            result = [int(x) for x in result]
+        result_str = str(result)
+
         st.success(f"Generated List ({mode}):")
         st.code(result_str, language='python')
 
-        # Right-aligned sum + copy button
+        # Right-aligned sum and copy
         col_sum, col_copy = st.columns([3, 1])
         with col_sum:
-            st.markdown(f"**Sum:** {sum(result)}")
+            st.markdown(f"**Sum:** {int(sum(result)) if mode == 'int' else sum(result)}")
+
         with col_copy:
             components.html(f"""
                 <textarea id="to-copy" style="opacity:0;height:1px;">{result_str}</textarea>
