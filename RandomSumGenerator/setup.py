@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="random_sum_generator",
-    version="0.2.0",
+    version="0.2.1",
     description="Generate random numbers that sum to a total with min/max bounds per part.",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
