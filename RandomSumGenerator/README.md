@@ -1,6 +1,6 @@
 # Random Sum Generator (RSG)
 
-[![Launch Streamlit](https://img.shields.io/badge/Launch%20App-Streamlit-blue?logo=streamlit)](https://your-streamlit-url)
+[![Launch Streamlit](https://img.shields.io/badge/Launch%20App-Streamlit-blue?logo=streamlit)](https://randomsumgenerator.streamlit.app/)
 
 A hybrid Python module + Streamlit app that generates random integers or floats summing to a target value — with per-part constraints and visual output.
 
@@ -16,6 +16,7 @@ pip install random_sum_generator
 from random_sum_generator import RandomSumGenerator
 
 gen = RandomSumGenerator()
+print(gen.generate(total=100, parts=4, min_val=5, max_val=25))
 print(gen.generate(100, 4, min_val=[10, 0, 5, 15], max_val=[30, 50, 25, 40], mode='float'))
 ```
 
