@@ -42,13 +42,24 @@ if %ERRORLEVEL% NEQ 0 (
     echo Failed to install webdriver-manager. Please try manually: pip install webdriver-manager
 )
 
+echo Installing tkinter...
+pip install tk
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to install tkinter. Please try manually: pip install tk
+)
+echo Installing openpyxl...
+pip install openpyxl
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to install openpyxl. Please try manually: pip install openpyxl
+)
+
 echo.
 echo *************************************************
 echo *          Installation Complete!                *
 echo *************************************************
 echo.
 echo If there were any errors, please try installing the packages manually:
-echo pip install pandas selenium webdriver-manager
+echo pip install pandas selenium webdriver-manager tk openpyxl
 echo.
 echo You can now run ThisConnect.py successfully!
 echo.
