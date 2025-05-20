@@ -1,6 +1,6 @@
 @echo off
 echo *************************************************
-echo *          ThisConnect Dependency Installer         *
+echo *          ThisConnect Dependency Installer     *
 echo *************************************************
 echo.
 echo This script will install the necessary Python packages for ThisConnect.
@@ -55,7 +55,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 echo.
 echo *************************************************
-echo *          Installation Complete!                *
+echo *          Installation Complete!               *
 echo *************************************************
 echo.
 echo If there were any errors, please try installing the packages manually:
