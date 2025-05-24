@@ -455,6 +455,14 @@ def process_gradesheet():
     # Create a set of Excel student IDs for quick lookups
     excel_student_ids = set()
     
+    # Check if Status column exists in Excel
+    has_status_column = 'Status' in df.columns
+    if has_status_column:
+        update_text_messages("✅ Status column found in Excel - will update both grades and attendance status")
+        update_text_messages("⏱️  Note: Status updates will increase processing time")
+    else:
+        update_text_messages("ℹ️  No 'Status' column found in Excel - will only update grades (faster processing)")
+    
     # Prepare a list to track which students need grade updates
     students_to_update = []
     unmatched_students = [] # Students in Excel but not on portal
@@ -469,7 +477,7 @@ def process_gradesheet():
         
         # Get the status from Excel (Present/Absent/On-Hold)
         excel_status = "Present"  # Default status
-        if 'Status' in df.columns:
+        if has_status_column:
             if pd.notna(excel_row['Status']):  # Check if the status is not NaN
                 excel_status = str(excel_row['Status']).strip()
                 # Normalize the status value
@@ -484,14 +492,13 @@ def process_gradesheet():
                     excel_status = "Present"  # Default if unrecognized
             else:
                 update_text_messages(f"No status found for student {excel_student_id}, defaulting to Present")
-        else:
-            update_text_messages("No 'Status' column found in Excel, all students will be marked as Present")
         
-        # Track status distribution for debugging
-        if excel_status in status_summary:
-            status_summary[excel_status] += 1
-        else:
-            status_summary[excel_status] = 1
+        # Track status distribution for debugging (only if status column exists)
+        if has_status_column:
+            if excel_status in status_summary:
+                status_summary[excel_status] += 1
+            else:
+                status_summary[excel_status] = 1
         
         # Add to our set of Excel student IDs
         excel_student_ids.add(excel_student_id)
@@ -499,14 +506,17 @@ def process_gradesheet():
         # Look up the student in our dictionary
         if excel_student_id in portal_students_dict:
             portal_student = portal_students_dict[excel_student_id]
-            update_text_messages(f"Match found for Student ID: {excel_student_id} - Status: {excel_status}, Grade: {excel_grade}")
+            if has_status_column:
+                update_text_messages(f"Match found for Student ID: {excel_student_id} - Status: {excel_status}, Grade: {excel_grade}")
+            else:
+                update_text_messages(f"Match found for Student ID: {excel_student_id} - Grade: {excel_grade}")
             
             # Add to the list of students to update (ALL matched students should be updated)
             students_to_update.append({
                 'index': portal_student['index'],
                 'id': excel_student_id,
                 'grade': excel_grade,
-                'status': excel_status,
+                'status': excel_status if has_status_column else None,
                 'name': excel_name
             })
         else:
@@ -519,8 +529,8 @@ def process_gradesheet():
             portal_only_students.append(student)
             update_text_messages(f"Student ID {student['id']} on portal but not in Excel.", "unmatched")
     
-    # Display status summary for debugging
-    if status_summary:
+    # Display status summary for debugging (only if status column exists)
+    if status_summary and has_status_column:
         update_text_messages(f"Excel status distribution: {status_summary}")
     
     # Validate that our student indexing is correct before proceeding
@@ -581,7 +591,11 @@ def process_gradesheet():
     
     # Update all the matched students at once to avoid individual page reloads
     if students_to_update:
-        update_text_messages(f"Preparing to update grades and status for {len(students_to_update)} students...")
+        if has_status_column:
+            update_text_messages(f"Preparing to update grades and status for {len(students_to_update)} students...")
+        else:
+            update_text_messages(f"Preparing to update grades for {len(students_to_update)} students...")
+            update_text_messages("ℹ️  Status updates skipped - no 'Status' column in Excel")
         
         # CRITICAL: Validate student indices BEFORE any updates
         update_text_messages("🔍 Validating student indices to prevent wrong student updates...")
@@ -621,7 +635,10 @@ def process_gradesheet():
                     student['index'] = correct_index
                 
                 corrected_students.append(student)
-                update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}, Status: {student['status']}")
+                if has_status_column:
+                    update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}, Status: {student['status']}")
+                else:
+                    update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}")
             else:
                 update_text_messages(f"✗ Student {student['id']} not found in current portal page - SKIPPING")
         
@@ -697,314 +714,321 @@ def process_gradesheet():
         
         update_text_messages(f"📝 Grade updates complete: {grade_update_count}/{len(students_to_update)} successful")
         
-        # Now handle status updates - each student individually with full isolation
-        update_text_messages("🎯 Starting status updates...")
-        
-        # Capture current status of all students before updates
-        js_capture_all_statuses = """
-        const statusSelects = document.querySelectorAll("mat-select");
-        const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
-        const currentStatuses = [];
-        
-        statusSelects.forEach((select, index) => {
-            const studentId = studentIdInputs[index]?.value?.trim() || 'UNKNOWN';
-            const currentStatus = select?.textContent?.trim() || 'UNKNOWN';
-            currentStatuses.push({
-                index: index,
-                id: studentId,
-                status: currentStatus
-            });
-        });
-        
-        return currentStatuses;
-        """
-        
-        pre_update_statuses = driver.execute_script(js_capture_all_statuses)
-        update_text_messages(f"📊 Pre-update status snapshot: {len(pre_update_statuses)} students captured")
-        
-        update_text_messages("📋 Status update summary:")
-        for i, student in enumerate(students_to_update[:5]):  # Show first 5 for debugging
-            # Find current status for this student
-            current_status = "UNKNOWN"
-            for status_info in pre_update_statuses:
-                if status_info['id'] == student['id']:
-                    current_status = status_info['status']
-                    break
-            update_text_messages(f"  {i+1}. ID: {student['id']}, Current: {current_status} → Target: {student['status']}")
-        if len(students_to_update) > 5:
-            update_text_messages(f"  ... and {len(students_to_update) - 5} more students")
-        
+        # Initialize status update counter (used in final summary regardless of Status column presence)
         status_update_count = 0
         
-        for student in students_to_update:
-            try:
-                # First check if status update is needed
-                js_status_check = f"""
-                const statusSelects = document.querySelectorAll("mat-select");
-                const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
-                
-                const statusSelect = statusSelects[{student['index']}];
-                const studentIdInput = studentIdInputs[{student['index']}];
-                
-                // CRITICAL: Verify we're checking the correct student
-                if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
-                    return {{
-                        needsUpdate: false,
-                        error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
-                    }};
-                }}
-                
-                if (!statusSelect) {{
-                    return {{
-                        needsUpdate: false,
-                        error: 'Status select not found'
-                    }};
-                }}
-                
-                const currentStatus = statusSelect.textContent.trim();
-                const targetStatus = '{student['status']}';
-                
-                return {{
-                    needsUpdate: currentStatus !== targetStatus,
-                    currentStatus: currentStatus,
-                    targetStatus: targetStatus,
-                    studentId: studentIdInput.value.trim()
-                }};
-                """
-                
-                status_info = driver.execute_script(js_status_check)
-                
-                if status_info.get('error'):
-                    update_text_messages(f"✗ Status check error for {student['id']}: {status_info['error']}")
-                    continue
-                
-                if not status_info.get('needsUpdate'):
-                    update_text_messages(f"- Status already correct for {student['id']}: {student['status']}")
-                    continue
-                
-                update_text_messages(f"🎯 Updating status for {student['id']}: {status_info['currentStatus']} → {student['status']}")
-                
-                # Open dropdown for this specific student
-                js_open_dropdown = f"""
-                const statusSelects = document.querySelectorAll("mat-select");
-                const statusSelect = statusSelects[{student['index']}];
-                
-                if (statusSelect) {{
-                    statusSelect.click();
-                    return true;
-                }}
-                return false;
-                """
-                
-                dropdown_opened = driver.execute_script(js_open_dropdown)
-                
-                if not dropdown_opened:
-                    update_text_messages(f"✗ Failed to open dropdown for {student['id']}")
-                    continue
-                
-                # Wait for dropdown to open
-                time.sleep(1.2)
-                
-                # First ensure all dropdowns are closed to prevent interference
-                driver.execute_script("document.body.click();")
-                time.sleep(0.5)
-                
-                # Re-open our specific dropdown
-                js_reopen_dropdown = f"""
-                const statusSelects = document.querySelectorAll("mat-select");
-                const ourDropdown = statusSelects[{student['index']}];
-                if (ourDropdown) {{
-                    ourDropdown.click();
-                    return true;
-                }}
-                return false;
-                """
-                
-                reopened = driver.execute_script(js_reopen_dropdown)
-                if not reopened:
-                    update_text_messages(f"✗ Failed to reopen dropdown for {student['id']}")
-                    continue
-                
-                # Wait for options to appear
-                time.sleep(1.0)
-                
-                # Select the correct option with enhanced matching
-                js_select_option = f"""
-                const targetStatus = '{student['status']}';
-                const options = document.querySelectorAll('mat-option');
-                const availableOptions = Array.from(options).map(opt => opt.textContent.trim());
-                
-                // Try exact match
-                for (const option of options) {{
-                    const optionText = option.textContent.trim();
-                    if (optionText === targetStatus) {{
-                        option.click();
-                        return {{success: true, matched: optionText, method: 'exact', availableOptions: availableOptions}};
-                    }}
-                }}
-                
-                // Try case-insensitive match
-                for (const option of options) {{
-                    const optionText = option.textContent.trim();
-                    if (optionText.toLowerCase() === targetStatus.toLowerCase()) {{
-                        option.click();
-                        return {{success: true, matched: optionText, method: 'case-insensitive', availableOptions: availableOptions}};
-                    }}
-                }}
-                
-                // Try partial matching for common variations
-                const targetLower = targetStatus.toLowerCase();
-                for (const option of options) {{
-                    const optionText = option.textContent.trim();
-                    const optionLower = optionText.toLowerCase();
+        # Only handle status updates if Excel has Status column
+        if has_status_column:
+            # Now handle status updates - each student individually with full isolation
+            update_text_messages("🎯 Starting status updates...")
+            
+            # Capture current status of all students before updates
+            js_capture_all_statuses = """
+            const statusSelects = document.querySelectorAll("mat-select");
+            const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+            const currentStatuses = [];
+            
+            statusSelects.forEach((select, index) => {
+                const studentId = studentIdInputs[index]?.value?.trim() || 'UNKNOWN';
+                const currentStatus = select?.textContent?.trim() || 'UNKNOWN';
+                currentStatuses.push({
+                    index: index,
+                    id: studentId,
+                    status: currentStatus
+                });
+            });
+            
+            return currentStatuses;
+            """
+            
+            pre_update_statuses = driver.execute_script(js_capture_all_statuses)
+            update_text_messages(f"📊 Pre-update status snapshot: {len(pre_update_statuses)} students captured")
+            
+            update_text_messages("📋 Status update summary:")
+            for i, student in enumerate(students_to_update[:5]):  # Show first 5 for debugging
+                # Find current status for this student
+                current_status = "UNKNOWN"
+                for status_info in pre_update_statuses:
+                    if status_info['id'] == student['id']:
+                        current_status = status_info['status']
+                        break
+                update_text_messages(f"  {i+1}. ID: {student['id']}, Current: {current_status} → Target: {student['status']}")
+            if len(students_to_update) > 5:
+                update_text_messages(f"  ... and {len(students_to_update) - 5} more students")
+            
+            for student in students_to_update:
+                try:
+                    # First check if status update is needed
+                    js_status_check = f"""
+                    const statusSelects = document.querySelectorAll("mat-select");
+                    const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
                     
-                    // Enhanced On-Hold matching
-                    if (targetLower.includes('hold') || targetLower.includes('on-hold') || targetLower === 'on-hold') {{
-                        if (optionLower.includes('hold') || optionLower.includes('on-hold') || 
-                            optionLower.includes('onhold') || optionLower.includes('on_hold') ||
-                            optionLower.includes('on hold') || optionLower === 'oh') {{
-                            option.click();
-                            return {{success: true, matched: optionText, method: 'partial-hold', availableOptions: availableOptions}};
-                        }}
+                    const statusSelect = statusSelects[{student['index']}];
+                    const studentIdInput = studentIdInputs[{student['index']}];
+                    
+                    // CRITICAL: Verify we're checking the correct student
+                    if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
+                        return {{
+                            needsUpdate: false,
+                            error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
+                        }};
                     }}
                     
-                    // Absent matching
-                    if (targetLower.includes('absent') || targetLower === 'absent') {{
-                        if (optionLower.includes('absent') || optionLower.includes('abs')) {{
+                    if (!statusSelect) {{
+                        return {{
+                            needsUpdate: false,
+                            error: 'Status select not found'
+                        }};
+                    }}
+                    
+                    const currentStatus = statusSelect.textContent.trim();
+                    const targetStatus = '{student['status']}';
+                    
+                    return {{
+                        needsUpdate: currentStatus !== targetStatus,
+                        currentStatus: currentStatus,
+                        targetStatus: targetStatus,
+                        studentId: studentIdInput.value.trim()
+                    }};
+                        """
+                    
+                    status_info = driver.execute_script(js_status_check)
+                    
+                    if status_info.get('error'):
+                        update_text_messages(f"✗ Status check error for {student['id']}: {status_info['error']}")
+                        continue
+                    
+                    if not status_info.get('needsUpdate'):
+                        update_text_messages(f"- Status already correct for {student['id']}: {student['status']}")
+                        continue
+                    
+                    update_text_messages(f"🎯 Updating status for {student['id']}: {status_info['currentStatus']} → {student['status']}")
+                    
+                    # Open dropdown for this specific student
+                    js_open_dropdown = f"""
+                    const statusSelects = document.querySelectorAll("mat-select");
+                    const statusSelect = statusSelects[{student['index']}];
+                    
+                    if (statusSelect) {{
+                        statusSelect.click();
+                        return true;
+                    }}
+                    return false;
+                    """
+                    
+                    dropdown_opened = driver.execute_script(js_open_dropdown)
+                    
+                    if not dropdown_opened:
+                        update_text_messages(f"✗ Failed to open dropdown for {student['id']}")
+                        continue
+                    
+                    # Wait for dropdown to open
+                    time.sleep(1.2)
+                    
+                    # First ensure all dropdowns are closed to prevent interference
+                    driver.execute_script("document.body.click();")
+                    time.sleep(0.5)
+                    
+                    # Re-open our specific dropdown
+                    js_reopen_dropdown = f"""
+                    const statusSelects = document.querySelectorAll("mat-select");
+                    const ourDropdown = statusSelects[{student['index']}];
+                    if (ourDropdown) {{
+                        ourDropdown.click();
+                        return true;
+                    }}
+                    return false;
+                    """
+                    
+                    reopened = driver.execute_script(js_reopen_dropdown)
+                    if not reopened:
+                        update_text_messages(f"✗ Failed to reopen dropdown for {student['id']}")
+                        continue
+                
+                    # Wait for options to appear
+                    time.sleep(1.0)
+                    
+                    # Select the correct option with enhanced matching
+                    js_select_option = f"""
+                    const targetStatus = '{student['status']}';
+                    const options = document.querySelectorAll('mat-option');
+                    const availableOptions = Array.from(options).map(opt => opt.textContent.trim());
+                    
+                    // Try exact match
+                    for (const option of options) {{
+                        const optionText = option.textContent.trim();
+                        if (optionText === targetStatus) {{
                             option.click();
-                            return {{success: true, matched: optionText, method: 'partial-absent', availableOptions: availableOptions}};
+                            return {{success: true, matched: optionText, method: 'exact', availableOptions: availableOptions}};
                         }}
                     }}
                     
-                    // Present matching
-                    if (targetLower.includes('present') || targetLower === 'present') {{
-                        if (optionLower.includes('present') || optionLower.includes('pres')) {{
+                    // Try case-insensitive match
+                    for (const option of options) {{
+                        const optionText = option.textContent.trim();
+                        if (optionText.toLowerCase() === targetStatus.toLowerCase()) {{
                             option.click();
-                            return {{success: true, matched: optionText, method: 'partial-present', availableOptions: availableOptions}};
+                            return {{success: true, matched: optionText, method: 'case-insensitive', availableOptions: availableOptions}};
                         }}
                     }}
-                }}
-                
-                // Close dropdown if no match found
-                document.body.click();
-                return {{
-                    success: false,
-                    availableOptions: availableOptions,
-                    targetStatus: targetStatus
-                }};
-                """
-                
-                option_result = driver.execute_script(js_select_option)
-                
-                # Wait for the selection to complete
-                time.sleep(1.0)
-                
-                # Verify the status was actually set correctly
-                js_verify_status = f"""
-                const statusSelects = document.querySelectorAll("mat-select");
-                const statusSelect = statusSelects[{student['index']}];
-                
-                if (statusSelect) {{
-                    return {{
-                        actualStatus: statusSelect.textContent.trim(),
-                        targetStatus: '{student['status']}'
-                    }};
-                }}
-                return {{error: 'Status select not found for verification'}};
-                """
-                
-                verification = driver.execute_script(js_verify_status)
-                
-                if option_result.get('success'):
-                    # Double-check that the status was actually set
-                    if verification.get('actualStatus') == student['status']:
-                        status_update_count += 1
-                        update_text_messages(f"✓ Status VERIFIED for {student['id']}: '{verification['actualStatus']}' (method: {option_result['method']})")
-                    else:
-                        update_text_messages(f"⚠ Status mismatch for {student['id']}: Expected '{student['status']}', got '{verification.get('actualStatus', 'UNKNOWN')}'")
+                    
+                    // Try partial matching for common variations
+                    const targetLower = targetStatus.toLowerCase();
+                    for (const option of options) {{
+                        const optionText = option.textContent.trim();
+                        const optionLower = optionText.toLowerCase();
                         
-                        # Attempt one retry for status correction
-                        update_text_messages(f"🔄 Retrying status update for {student['id']}...")
-                        
-                        # Close any open dropdowns
-                        driver.execute_script("document.body.click();")
-                        time.sleep(0.8)
-                        
-                        # Try once more
-                        retry_opened = driver.execute_script(f"""
-                        const statusSelects = document.querySelectorAll("mat-select");
-                        const ourDropdown = statusSelects[{student['index']}];
-                        if (ourDropdown) {{
-                            ourDropdown.click();
-                            return true;
+                        // Enhanced On-Hold matching
+                        if (targetLower.includes('hold') || targetLower.includes('on-hold') || targetLower === 'on-hold') {{
+                            if (optionLower.includes('hold') || optionLower.includes('on-hold') || 
+                                optionLower.includes('onhold') || optionLower.includes('on_hold') ||
+                                optionLower.includes('on hold') || optionLower === 'oh') {{
+                                option.click();
+                                return {{success: true, matched: optionText, method: 'partial-hold', availableOptions: availableOptions}};
+                            }}
                         }}
-                        return false;
-                        """)
                         
-                        if retry_opened:
-                            time.sleep(1.0)
-                            retry_result = driver.execute_script(js_select_option)
-                            time.sleep(1.0)
-                            
-                            # Verify again
-                            final_verification = driver.execute_script(js_verify_status)
-                            if final_verification.get('actualStatus') == student['status']:
-                                status_update_count += 1
-                                update_text_messages(f"✓ Status CORRECTED on retry for {student['id']}: '{final_verification['actualStatus']}'")
-                            else:
-                                update_text_messages(f"✗ Status retry failed for {student['id']}: Still showing '{final_verification.get('actualStatus', 'UNKNOWN')}'")
+                        // Absent matching
+                        if (targetLower.includes('absent') || targetLower === 'absent') {{
+                            if (optionLower.includes('absent') || optionLower.includes('abs')) {{
+                                option.click();
+                                return {{success: true, matched: optionText, method: 'partial-absent', availableOptions: availableOptions}};
+                            }}
+                        }}
+                        
+                        // Present matching
+                        if (targetLower.includes('present') || targetLower === 'present') {{
+                            if (optionLower.includes('present') || optionLower.includes('pres')) {{
+                                option.click();
+                                return {{success: true, matched: optionText, method: 'partial-present', availableOptions: availableOptions}};
+                            }}
+                        }}
+                    }}
+                    
+                    // Close dropdown if no match found
+                    document.body.click();
+                    return {{
+                        success: false,
+                        availableOptions: availableOptions,
+                        targetStatus: targetStatus
+                    }};
+                    """
+                
+                    option_result = driver.execute_script(js_select_option)
+                    
+                    # Wait for the selection to complete
+                    time.sleep(1.0)
+                    
+                    # Verify the status was actually set correctly
+                    js_verify_status = f"""
+                    const statusSelects = document.querySelectorAll("mat-select");
+                    const statusSelect = statusSelects[{student['index']}];
+                    
+                    if (statusSelect) {{
+                        return {{
+                            actualStatus: statusSelect.textContent.trim(),
+                            targetStatus: '{student['status']}'
+                        }};
+                    }}
+                    return {{error: 'Status select not found for verification'}};
+                    """
+                    
+                    verification = driver.execute_script(js_verify_status)
+                    
+                    if option_result.get('success'):
+                        # Double-check that the status was actually set
+                        if verification.get('actualStatus') == student['status']:
+                            status_update_count += 1
+                            update_text_messages(f"✓ Status VERIFIED for {student['id']}: '{verification['actualStatus']}' (method: {option_result['method']})")
                         else:
-                            update_text_messages(f"✗ Failed to reopen dropdown for retry on {student['id']}")
-                else:
-                    update_text_messages(f"✗ Status update failed for {student['id']}. Target: '{student['status']}', Available: {option_result.get('availableOptions', [])}")
-                
-                # Ensure any dropdowns are closed before moving to next student
-                driver.execute_script("document.body.click();")
-                time.sleep(0.5)
-                
-                # Longer delay between status updates to ensure complete isolation
-                time.sleep(1.5)
-                
-            except Exception as e:
-                update_text_messages(f"✗ Exception during status update for {student['id']}: {str(e)}")
-        
-        update_text_messages(f"🎯 Status updates complete: {status_update_count}/{len(students_to_update)} successful")
-        
-        # Capture final status of all students to detect any cross-contamination
-        update_text_messages("🔍 Performing final status verification...")
-        post_update_statuses = driver.execute_script(js_capture_all_statuses)
-        
-        # Compare pre and post statuses to detect unexpected changes
-        unexpected_changes = []
-        for pre_status in pre_update_statuses:
-            # Find corresponding post status
-            post_status = None
-            for post in post_update_statuses:
-                if post['id'] == pre_status['id'] and post['index'] == pre_status['index']:
-                    post_status = post
-                    break
+                            update_text_messages(f"⚠ Status mismatch for {student['id']}: Expected '{student['status']}', got '{verification.get('actualStatus', 'UNKNOWN')}'")
+                            
+                            # Attempt one retry for status correction
+                            update_text_messages(f"🔄 Retrying status update for {student['id']}...")
+                            
+                            # Close any open dropdowns
+                            driver.execute_script("document.body.click();")
+                            time.sleep(0.8)
+                            
+                            # Try once more
+                            retry_opened = driver.execute_script(f"""
+                            const statusSelects = document.querySelectorAll("mat-select");
+                            const ourDropdown = statusSelects[{student['index']}];
+                            if (ourDropdown) {{
+                                ourDropdown.click();
+                                return true;
+                            }}
+                            return false;
+                            """)
+                            
+                            if retry_opened:
+                                time.sleep(1.0)
+                                retry_result = driver.execute_script(js_select_option)
+                                time.sleep(1.0)
+                                
+                                # Verify again
+                                final_verification = driver.execute_script(js_verify_status)
+                                if final_verification.get('actualStatus') == student['status']:
+                                    status_update_count += 1
+                                    update_text_messages(f"✓ Status CORRECTED on retry for {student['id']}: '{final_verification['actualStatus']}'")
+                                else:
+                                    update_text_messages(f"✗ Status retry failed for {student['id']}: Still showing '{final_verification.get('actualStatus', 'UNKNOWN')}'")
+                            else:
+                                update_text_messages(f"✗ Failed to reopen dropdown for retry on {student['id']}")
+                    else:
+                        update_text_messages(f"✗ Status update failed for {student['id']}. Target: '{student['status']}', Available: {option_result.get('availableOptions', [])}")
+                    
+                    # Ensure any dropdowns are closed before moving to next student
+                    driver.execute_script("document.body.click();")
+                    time.sleep(0.5)
+                    
+                    # Longer delay between status updates to ensure complete isolation
+                    time.sleep(1.5)
+                    
+                except Exception as e:
+                    update_text_messages(f"✗ Exception during status update for {student['id']}: {str(e)}")
             
-            if post_status:
-                # Check if this student was supposed to be updated
-                was_target = any(s['id'] == pre_status['id'] for s in students_to_update)
+            update_text_messages(f"🎯 Status updates complete: {status_update_count}/{len(students_to_update)} successful")
+            
+            # Capture final status of all students to detect any cross-contamination
+            update_text_messages("🔍 Performing final status verification...")
+            post_update_statuses = driver.execute_script(js_capture_all_statuses)
+            
+            # Compare pre and post statuses to detect unexpected changes
+            unexpected_changes = []
+            for pre_status in pre_update_statuses:
+                # Find corresponding post status
+                post_status = None
+                for post in post_update_statuses:
+                    if post['id'] == pre_status['id'] and post['index'] == pre_status['index']:
+                        post_status = post
+                        break
                 
-                if not was_target and pre_status['status'] != post_status['status']:
-                    # This student wasn't supposed to change but did
-                    unexpected_changes.append({
-                        'id': pre_status['id'],
-                        'index': pre_status['index'],
-                        'before': pre_status['status'],
-                        'after': post_status['status']
-                    })
+                if post_status:
+                    # Check if this student was supposed to be updated
+                    was_target = any(s['id'] == pre_status['id'] for s in students_to_update)
+                    
+                    if not was_target and pre_status['status'] != post_status['status']:
+                        # This student wasn't supposed to change but did
+                        unexpected_changes.append({
+                            'id': pre_status['id'],
+                            'index': pre_status['index'],
+                            'before': pre_status['status'],
+                            'after': post_status['status']
+                        })
+            
+            if unexpected_changes:
+                update_text_messages(f"⚠ WARNING: {len(unexpected_changes)} unexpected status changes detected!")
+                for change in unexpected_changes[:3]:  # Show first 3
+                    update_text_messages(f"  Student {change['id']} (index {change['index']}): {change['before']} → {change['after']} (NOT EXPECTED)")
+            else:
+                update_text_messages("✅ No unexpected status changes detected")
         
-        if unexpected_changes:
-            update_text_messages(f"⚠ WARNING: {len(unexpected_changes)} unexpected status changes detected!")
-            for change in unexpected_changes[:3]:  # Show first 3
-                update_text_messages(f"  Student {change['id']} (index {change['index']}): {change['before']} → {change['after']} (NOT EXPECTED)")
+        # Final summary message that handles both scenarios
+        if has_status_column:
+            update_text_messages(f"✅ All updates finished: {grade_update_count} grades, {status_update_count} statuses")
         else:
-            update_text_messages("✅ No unexpected status changes detected")
-            
-        update_text_messages(f"✅ All updates finished: {grade_update_count} grades, {status_update_count} statuses")
+            update_text_messages(f"✅ All updates finished: {grade_update_count} grades (status updates skipped - no Status column)")
 
     # # Check for unmatched students and create a log file if necessary
     # if len(unmatched_students) > 0:
@@ -1054,7 +1078,7 @@ except tk.TclError as e:
     # Continue without an icon
 
 # Set the size of the main window (width x height)
-root.geometry("600x400")  # Adjust the size as needed
+root.geometry("750x500")  # Increased size for better visibility
 
 # File path entry
 label_file_path = tk.Label(root, text="Gradesheet EXCEL File Path:")
@@ -1090,6 +1114,18 @@ total_marks_label.pack(side=tk.LEFT)
 total_marks_var = tk.StringVar(root, value="100")  # Default to 100
 total_marks_entry = tk.Entry(total_marks_frame, textvariable=total_marks_var, width=5)
 total_marks_entry.pack(side=tk.LEFT, padx=5)
+
+# Status update warning label
+status_warning_text = ("WARNING: To update final exam status, include a 'Status' column (Present/Absent/On-Hold).\nThis takes longer. Without it, only grades update.")
+status_warning_label = tk.Label(
+    root,
+    text=status_warning_text,
+    font=("Helvetica", 9),
+    fg="darkblue",
+    justify=tk.CENTER,
+    wraplength=580
+)
+status_warning_label.pack(pady=(5, 5))
 
 # Process button
 button_process = tk.Button(root, text="Start Processing", command=start_processing_thread)
