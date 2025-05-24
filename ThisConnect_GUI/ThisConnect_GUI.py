@@ -17,6 +17,7 @@ import os
 import datetime
 import queue
 import time  # Add time module for delays
+import subprocess  # Add subprocess for opening files
 
 # Global variable declaration
 text_messages = None # Declare text_messages as a global variable
@@ -73,7 +74,6 @@ def open_log_file(log_file_path):
         os.startfile(log_file_path)  # This works on Windows
     except AttributeError:
         # For MacOS and Linux, you can use subprocess
-        import subprocess
         subprocess.call(['open', log_file_path])  # MacOS
         subprocess.call(['xdg-open', log_file_path])  # Linux
 
@@ -81,7 +81,6 @@ def open_log_folder(folder_path):
     try:
         os.startfile(folder_path)  # This works on Windows
     except AttributeError:
-        import subprocess
         subprocess.call(['open', folder_path])  # MacOS
         subprocess.call(['xdg-open', folder_path])  # Linux
 
@@ -381,20 +380,48 @@ def process_gradesheet():
     js_script = """
     const rows = document.querySelectorAll("input[placeholder='StudentId']");
     const studentData = [];
+    
+    // Also get available status options from the first dropdown
+    let availableStatuses = [];
+    const firstStatusSelect = document.querySelector("mat-select");
+    if (firstStatusSelect) {
+        // Click to open dropdown temporarily to see options
+        firstStatusSelect.click();
+        
+        // Wait briefly for options to appear
+        setTimeout(() => {
+            const options = document.querySelectorAll('mat-option');
+            availableStatuses = Array.from(options).map(opt => opt.textContent.trim());
+            // Close dropdown
+            document.body.click();
+        }, 300);
+    }
 
     rows.forEach((idInput, index) => {
       const nameInput = document.querySelectorAll("input[placeholder='Student Name']")[index];
+      const statusSelect = document.querySelectorAll("mat-select")[index];
       
       studentData.push({
         id: idInput?.value,
         name: nameInput?.value,
-        index: index  // Store the index for later use
+        index: index,  // Store the index for later use
+        currentStatus: statusSelect?.textContent?.trim() || 'Present'  // Get current status
       });
     });
 
-    return studentData;
+    return {studentData: studentData, availableStatuses: availableStatuses};
     """
-    portal_students = driver.execute_script(js_script)
+    
+    # Wait a moment for the dropdown detection
+    time.sleep(1)
+    result = driver.execute_script(js_script)
+    portal_students = result.get('studentData', [])
+    available_statuses = result.get('availableStatuses', [])
+    
+    if available_statuses:
+        update_text_messages(f"Available status options on portal: {available_statuses}")
+    else:
+        update_text_messages("Could not detect available status options")
     
     # Check if we need to set the Total Marks field (usually 100)
     update_text_messages("Checking for Total Marks field...")
@@ -432,11 +459,39 @@ def process_gradesheet():
     students_to_update = []
     unmatched_students = [] # Students in Excel but not on portal
     portal_only_students = [] # Students on portal but not in Excel
+    status_summary = {}  # Track status distribution for debugging
+    
     for index, excel_row in df.iterrows():
         excel_student_id = str(excel_row['ID #']).strip()  # Get the student ID from Excel
         excel_grade = "{:.2f}".format(round(excel_row['Total'], 2))  # Round and format the grade
         excel_sl = str(excel_row['Sl #']).strip()  # Get the serial number
         excel_name = str(excel_row['Name']).strip()  # Get the student name
+        
+        # Get the status from Excel (Present/Absent/On-Hold)
+        excel_status = "Present"  # Default status
+        if 'Status' in df.columns:
+            if pd.notna(excel_row['Status']):  # Check if the status is not NaN
+                excel_status = str(excel_row['Status']).strip()
+                # Normalize the status value
+                if excel_status.lower() in ["present", "p"]:
+                    excel_status = "Present"
+                elif excel_status.lower() in ["absent", "a"]:
+                    excel_status = "Absent"
+                elif excel_status.lower() in ["on-hold", "onhold", "on hold", "oh", "on_hold"]:
+                    excel_status = "On-Hold"
+                else:
+                    update_text_messages(f"Warning: Unrecognized status '{excel_status}' for student {excel_student_id}, defaulting to Present")
+                    excel_status = "Present"  # Default if unrecognized
+            else:
+                update_text_messages(f"No status found for student {excel_student_id}, defaulting to Present")
+        else:
+            update_text_messages("No 'Status' column found in Excel, all students will be marked as Present")
+        
+        # Track status distribution for debugging
+        if excel_status in status_summary:
+            status_summary[excel_status] += 1
+        else:
+            status_summary[excel_status] = 1
         
         # Add to our set of Excel student IDs
         excel_student_ids.add(excel_student_id)
@@ -444,13 +499,15 @@ def process_gradesheet():
         # Look up the student in our dictionary
         if excel_student_id in portal_students_dict:
             portal_student = portal_students_dict[excel_student_id]
-            update_text_messages(f"Match found for Student ID: {excel_student_id}")
+            update_text_messages(f"Match found for Student ID: {excel_student_id} - Status: {excel_status}, Grade: {excel_grade}")
             
-            # Add to the list of students to update
+            # Add to the list of students to update (ALL matched students should be updated)
             students_to_update.append({
                 'index': portal_student['index'],
                 'id': excel_student_id,
-                'grade': excel_grade
+                'grade': excel_grade,
+                'status': excel_status,
+                'name': excel_name
             })
         else:
             unmatched_students.append({'sl': excel_sl, 'id': excel_student_id, 'name': excel_name})
@@ -462,44 +519,492 @@ def process_gradesheet():
             portal_only_students.append(student)
             update_text_messages(f"Student ID {student['id']} on portal but not in Excel.", "unmatched")
     
-    # Update all the matched students at once to avoid individual page reloads
+    # Display status summary for debugging
+    if status_summary:
+        update_text_messages(f"Excel status distribution: {status_summary}")
+    
+    # Validate that our student indexing is correct before proceeding
     if students_to_update:
-        update_text_messages(f"Updating grades for {len(students_to_update)} students...")
+        update_text_messages("Validating student index mapping...")
+        js_validate_indices = """
+        const studentIds = document.querySelectorAll("input[placeholder='StudentId']");
+        const validation = [];
         
-        # Create a JavaScript array of student updates
-        js_students = []
-        for student in students_to_update:
-            js_students.append(f"{{index: {student['index']}, grade: '{student['grade']}'}}")
+        studentIds.forEach((input, index) => {
+            validation.push({
+                index: index,
+                id: input.value,
+                name: document.querySelectorAll("input[placeholder='Student Name']")[index]?.value || 'Unknown'
+            });
+        });
         
-        js_student_array = f"[{', '.join(js_students)}]"
-        
-        # Execute a single JavaScript call to update all grades at once
-        js_batch_update = f"""
-        const studentsToUpdate = {js_student_array};
-        const marksInputs = document.querySelectorAll("input[placeholder='Marks']");
-        let successCount = 0;
-        
-        for (const student of studentsToUpdate) {{
-            const targetInput = marksInputs[student.index];
-            if (targetInput) {{
-                // Set the value
-                targetInput.value = student.grade;
-                
-                // Trigger events
-                targetInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                targetInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                successCount++;
-            }}
-        }}
-        
-        return successCount;
+        return validation;
         """
         
-        updated_count = driver.execute_script(js_batch_update)
-        update_text_messages(f"Successfully updated {updated_count} of {len(students_to_update)} grades")
+        portal_validation = driver.execute_script(js_validate_indices)
+        
+        # Check if our students_to_update indices match the portal
+        index_mismatches = []
+        for student in students_to_update:
+            if student['index'] < len(portal_validation):
+                portal_student = portal_validation[student['index']]
+                if portal_student['id'] != student['id']:
+                    index_mismatches.append({
+                        'excel_id': student['id'],
+                        'excel_name': student['name'],
+                        'portal_id': portal_student['id'],
+                        'portal_name': portal_student['name'],
+                        'index': student['index']
+                    })
+        
+        if index_mismatches:
+            update_text_messages(f"⚠ WARNING: Found {len(index_mismatches)} index mismatches!")
+            for mismatch in index_mismatches[:5]:  # Show first 5 mismatches
+                update_text_messages(f"  Index {mismatch['index']}: Excel has {mismatch['excel_id']} ({mismatch['excel_name']}), Portal has {mismatch['portal_id']} ({mismatch['portal_name']})")
+            
+            # Re-map the students based on actual portal order
+            update_text_messages("Re-mapping student indices based on portal order...")
+            portal_dict = {student['id']: i for i, student in enumerate(portal_validation)}
+            
+            corrected_students = []
+            for student in students_to_update:
+                if student['id'] in portal_dict:
+                    student['index'] = portal_dict[student['id']]
+                    corrected_students.append(student)
+                    update_text_messages(f"Corrected index for {student['id']}: now at index {student['index']}")
+                else:
+                    update_text_messages(f"⚠ Student {student['id']} not found in current portal list")
+            
+            students_to_update = corrected_students
+        else:
+            update_text_messages("✓ All student indices validated successfully")
     
-        # If there's a "Save" or "Submit" button that needs to be clicked, we'd handle it here
-        # For now, we'll let the user manually handle the final submission
+    # Update all the matched students at once to avoid individual page reloads
+    if students_to_update:
+        update_text_messages(f"Preparing to update grades and status for {len(students_to_update)} students...")
+        
+        # CRITICAL: Validate student indices BEFORE any updates
+        update_text_messages("🔍 Validating student indices to prevent wrong student updates...")
+        js_validate_all = """
+        const studentIds = document.querySelectorAll("input[placeholder='StudentId']");
+        const validation = [];
+        
+        studentIds.forEach((input, index) => {
+            validation.push({
+                index: index,
+                id: input.value.trim(),
+                name: document.querySelectorAll("input[placeholder='Student Name']")[index]?.value?.trim() || 'Unknown'
+            });
+        });
+        
+        return validation;
+        """
+        
+        portal_validation = driver.execute_script(js_validate_all)
+        
+        # Check for index mismatches and correct them BEFORE any updates
+        corrected_students = []
+        index_mismatches = 0
+        
+        for student in students_to_update:
+            # Find the correct index for this student ID
+            correct_index = None
+            for i, portal_student in enumerate(portal_validation):
+                if portal_student['id'] == student['id']:
+                    correct_index = i
+                    break
+            
+            if correct_index is not None:
+                if correct_index != student['index']:
+                    index_mismatches += 1
+                    update_text_messages(f"⚠ Index corrected for {student['id']}: {student['index']} → {correct_index}")
+                    student['index'] = correct_index
+                
+                corrected_students.append(student)
+                update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}, Status: {student['status']}")
+            else:
+                update_text_messages(f"✗ Student {student['id']} not found in current portal page - SKIPPING")
+        
+        students_to_update = corrected_students
+        
+        if index_mismatches > 0:
+            update_text_messages(f"⚠ Corrected {index_mismatches} index mismatches")
+        
+        if not students_to_update:
+            update_text_messages("❌ No valid students to update after validation")
+            return
+        
+        update_text_messages(f"✅ Validation complete. Proceeding with {len(students_to_update)} validated students")
+        
+        # Now update grades safely - each student individually with verification
+        update_text_messages("📝 Starting grade updates...")
+        grade_update_count = 0
+        
+        for student in students_to_update:
+            try:
+                # Double-check the student ID before updating grades
+                js_grade_update = f"""
+                const marksInputs = document.querySelectorAll("input[placeholder='Marks']");
+                const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+                
+                const targetInput = marksInputs[{student['index']}];
+                const studentIdInput = studentIdInputs[{student['index']}];
+                
+                // CRITICAL: Verify we're updating the correct student
+                if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
+                    return {{
+                        success: false,
+                        error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
+                    }};
+                }}
+                
+                if (!targetInput) {{
+                    return {{
+                        success: false,
+                        error: 'Marks input field not found'
+                    }};
+                }}
+                
+                const oldValue = targetInput.value;
+                targetInput.value = '{student['grade']}';
+                targetInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                targetInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                targetInput.dispatchEvent(new Event('blur', {{ bubbles: true }}));
+                
+                return {{
+                    success: true,
+                    oldValue: oldValue,
+                    newValue: targetInput.value,
+                    studentId: studentIdInput.value.trim()
+                }};
+                """
+                
+                grade_result = driver.execute_script(js_grade_update)
+                
+                if grade_result.get('success'):
+                    grade_update_count += 1
+                    update_text_messages(f"✓ Grade updated for {student['id']}: {grade_result.get('oldValue', 'empty')} → {student['grade']}")
+                else:
+                    update_text_messages(f"✗ Grade update FAILED for {student['id']}: {grade_result.get('error', 'Unknown error')}")
+                    continue  # Skip status update if grade update failed
+                
+                # Small delay between individual updates
+                time.sleep(0.3)
+                
+            except Exception as e:
+                update_text_messages(f"✗ Exception during grade update for {student['id']}: {str(e)}")
+                continue
+        
+        update_text_messages(f"📝 Grade updates complete: {grade_update_count}/{len(students_to_update)} successful")
+        
+        # Now handle status updates - each student individually with full isolation
+        update_text_messages("🎯 Starting status updates...")
+        
+        # Capture current status of all students before updates
+        js_capture_all_statuses = """
+        const statusSelects = document.querySelectorAll("mat-select");
+        const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+        const currentStatuses = [];
+        
+        statusSelects.forEach((select, index) => {
+            const studentId = studentIdInputs[index]?.value?.trim() || 'UNKNOWN';
+            const currentStatus = select?.textContent?.trim() || 'UNKNOWN';
+            currentStatuses.push({
+                index: index,
+                id: studentId,
+                status: currentStatus
+            });
+        });
+        
+        return currentStatuses;
+        """
+        
+        pre_update_statuses = driver.execute_script(js_capture_all_statuses)
+        update_text_messages(f"📊 Pre-update status snapshot: {len(pre_update_statuses)} students captured")
+        
+        update_text_messages("📋 Status update summary:")
+        for i, student in enumerate(students_to_update[:5]):  # Show first 5 for debugging
+            # Find current status for this student
+            current_status = "UNKNOWN"
+            for status_info in pre_update_statuses:
+                if status_info['id'] == student['id']:
+                    current_status = status_info['status']
+                    break
+            update_text_messages(f"  {i+1}. ID: {student['id']}, Current: {current_status} → Target: {student['status']}")
+        if len(students_to_update) > 5:
+            update_text_messages(f"  ... and {len(students_to_update) - 5} more students")
+        
+        status_update_count = 0
+        
+        for student in students_to_update:
+            try:
+                # First check if status update is needed
+                js_status_check = f"""
+                const statusSelects = document.querySelectorAll("mat-select");
+                const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+                
+                const statusSelect = statusSelects[{student['index']}];
+                const studentIdInput = studentIdInputs[{student['index']}];
+                
+                // CRITICAL: Verify we're checking the correct student
+                if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
+                    return {{
+                        needsUpdate: false,
+                        error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
+                    }};
+                }}
+                
+                if (!statusSelect) {{
+                    return {{
+                        needsUpdate: false,
+                        error: 'Status select not found'
+                    }};
+                }}
+                
+                const currentStatus = statusSelect.textContent.trim();
+                const targetStatus = '{student['status']}';
+                
+                return {{
+                    needsUpdate: currentStatus !== targetStatus,
+                    currentStatus: currentStatus,
+                    targetStatus: targetStatus,
+                    studentId: studentIdInput.value.trim()
+                }};
+                """
+                
+                status_info = driver.execute_script(js_status_check)
+                
+                if status_info.get('error'):
+                    update_text_messages(f"✗ Status check error for {student['id']}: {status_info['error']}")
+                    continue
+                
+                if not status_info.get('needsUpdate'):
+                    update_text_messages(f"- Status already correct for {student['id']}: {student['status']}")
+                    continue
+                
+                update_text_messages(f"🎯 Updating status for {student['id']}: {status_info['currentStatus']} → {student['status']}")
+                
+                # Open dropdown for this specific student
+                js_open_dropdown = f"""
+                const statusSelects = document.querySelectorAll("mat-select");
+                const statusSelect = statusSelects[{student['index']}];
+                
+                if (statusSelect) {{
+                    statusSelect.click();
+                    return true;
+                }}
+                return false;
+                """
+                
+                dropdown_opened = driver.execute_script(js_open_dropdown)
+                
+                if not dropdown_opened:
+                    update_text_messages(f"✗ Failed to open dropdown for {student['id']}")
+                    continue
+                
+                # Wait for dropdown to open
+                time.sleep(1.2)
+                
+                # First ensure all dropdowns are closed to prevent interference
+                driver.execute_script("document.body.click();")
+                time.sleep(0.5)
+                
+                # Re-open our specific dropdown
+                js_reopen_dropdown = f"""
+                const statusSelects = document.querySelectorAll("mat-select");
+                const ourDropdown = statusSelects[{student['index']}];
+                if (ourDropdown) {{
+                    ourDropdown.click();
+                    return true;
+                }}
+                return false;
+                """
+                
+                reopened = driver.execute_script(js_reopen_dropdown)
+                if not reopened:
+                    update_text_messages(f"✗ Failed to reopen dropdown for {student['id']}")
+                    continue
+                
+                # Wait for options to appear
+                time.sleep(1.0)
+                
+                # Select the correct option with enhanced matching
+                js_select_option = f"""
+                const targetStatus = '{student['status']}';
+                const options = document.querySelectorAll('mat-option');
+                const availableOptions = Array.from(options).map(opt => opt.textContent.trim());
+                
+                // Try exact match
+                for (const option of options) {{
+                    const optionText = option.textContent.trim();
+                    if (optionText === targetStatus) {{
+                        option.click();
+                        return {{success: true, matched: optionText, method: 'exact', availableOptions: availableOptions}};
+                    }}
+                }}
+                
+                // Try case-insensitive match
+                for (const option of options) {{
+                    const optionText = option.textContent.trim();
+                    if (optionText.toLowerCase() === targetStatus.toLowerCase()) {{
+                        option.click();
+                        return {{success: true, matched: optionText, method: 'case-insensitive', availableOptions: availableOptions}};
+                    }}
+                }}
+                
+                // Try partial matching for common variations
+                const targetLower = targetStatus.toLowerCase();
+                for (const option of options) {{
+                    const optionText = option.textContent.trim();
+                    const optionLower = optionText.toLowerCase();
+                    
+                    // Enhanced On-Hold matching
+                    if (targetLower.includes('hold') || targetLower.includes('on-hold') || targetLower === 'on-hold') {{
+                        if (optionLower.includes('hold') || optionLower.includes('on-hold') || 
+                            optionLower.includes('onhold') || optionLower.includes('on_hold') ||
+                            optionLower.includes('on hold') || optionLower === 'oh') {{
+                            option.click();
+                            return {{success: true, matched: optionText, method: 'partial-hold', availableOptions: availableOptions}};
+                        }}
+                    }}
+                    
+                    // Absent matching
+                    if (targetLower.includes('absent') || targetLower === 'absent') {{
+                        if (optionLower.includes('absent') || optionLower.includes('abs')) {{
+                            option.click();
+                            return {{success: true, matched: optionText, method: 'partial-absent', availableOptions: availableOptions}};
+                        }}
+                    }}
+                    
+                    // Present matching
+                    if (targetLower.includes('present') || targetLower === 'present') {{
+                        if (optionLower.includes('present') || optionLower.includes('pres')) {{
+                            option.click();
+                            return {{success: true, matched: optionText, method: 'partial-present', availableOptions: availableOptions}};
+                        }}
+                    }}
+                }}
+                
+                // Close dropdown if no match found
+                document.body.click();
+                return {{
+                    success: false,
+                    availableOptions: availableOptions,
+                    targetStatus: targetStatus
+                }};
+                """
+                
+                option_result = driver.execute_script(js_select_option)
+                
+                # Wait for the selection to complete
+                time.sleep(1.0)
+                
+                # Verify the status was actually set correctly
+                js_verify_status = f"""
+                const statusSelects = document.querySelectorAll("mat-select");
+                const statusSelect = statusSelects[{student['index']}];
+                
+                if (statusSelect) {{
+                    return {{
+                        actualStatus: statusSelect.textContent.trim(),
+                        targetStatus: '{student['status']}'
+                    }};
+                }}
+                return {{error: 'Status select not found for verification'}};
+                """
+                
+                verification = driver.execute_script(js_verify_status)
+                
+                if option_result.get('success'):
+                    # Double-check that the status was actually set
+                    if verification.get('actualStatus') == student['status']:
+                        status_update_count += 1
+                        update_text_messages(f"✓ Status VERIFIED for {student['id']}: '{verification['actualStatus']}' (method: {option_result['method']})")
+                    else:
+                        update_text_messages(f"⚠ Status mismatch for {student['id']}: Expected '{student['status']}', got '{verification.get('actualStatus', 'UNKNOWN')}'")
+                        
+                        # Attempt one retry for status correction
+                        update_text_messages(f"🔄 Retrying status update for {student['id']}...")
+                        
+                        # Close any open dropdowns
+                        driver.execute_script("document.body.click();")
+                        time.sleep(0.8)
+                        
+                        # Try once more
+                        retry_opened = driver.execute_script(f"""
+                        const statusSelects = document.querySelectorAll("mat-select");
+                        const ourDropdown = statusSelects[{student['index']}];
+                        if (ourDropdown) {{
+                            ourDropdown.click();
+                            return true;
+                        }}
+                        return false;
+                        """)
+                        
+                        if retry_opened:
+                            time.sleep(1.0)
+                            retry_result = driver.execute_script(js_select_option)
+                            time.sleep(1.0)
+                            
+                            # Verify again
+                            final_verification = driver.execute_script(js_verify_status)
+                            if final_verification.get('actualStatus') == student['status']:
+                                status_update_count += 1
+                                update_text_messages(f"✓ Status CORRECTED on retry for {student['id']}: '{final_verification['actualStatus']}'")
+                            else:
+                                update_text_messages(f"✗ Status retry failed for {student['id']}: Still showing '{final_verification.get('actualStatus', 'UNKNOWN')}'")
+                        else:
+                            update_text_messages(f"✗ Failed to reopen dropdown for retry on {student['id']}")
+                else:
+                    update_text_messages(f"✗ Status update failed for {student['id']}. Target: '{student['status']}', Available: {option_result.get('availableOptions', [])}")
+                
+                # Ensure any dropdowns are closed before moving to next student
+                driver.execute_script("document.body.click();")
+                time.sleep(0.5)
+                
+                # Longer delay between status updates to ensure complete isolation
+                time.sleep(1.5)
+                
+            except Exception as e:
+                update_text_messages(f"✗ Exception during status update for {student['id']}: {str(e)}")
+        
+        update_text_messages(f"🎯 Status updates complete: {status_update_count}/{len(students_to_update)} successful")
+        
+        # Capture final status of all students to detect any cross-contamination
+        update_text_messages("🔍 Performing final status verification...")
+        post_update_statuses = driver.execute_script(js_capture_all_statuses)
+        
+        # Compare pre and post statuses to detect unexpected changes
+        unexpected_changes = []
+        for pre_status in pre_update_statuses:
+            # Find corresponding post status
+            post_status = None
+            for post in post_update_statuses:
+                if post['id'] == pre_status['id'] and post['index'] == pre_status['index']:
+                    post_status = post
+                    break
+            
+            if post_status:
+                # Check if this student was supposed to be updated
+                was_target = any(s['id'] == pre_status['id'] for s in students_to_update)
+                
+                if not was_target and pre_status['status'] != post_status['status']:
+                    # This student wasn't supposed to change but did
+                    unexpected_changes.append({
+                        'id': pre_status['id'],
+                        'index': pre_status['index'],
+                        'before': pre_status['status'],
+                        'after': post_status['status']
+                    })
+        
+        if unexpected_changes:
+            update_text_messages(f"⚠ WARNING: {len(unexpected_changes)} unexpected status changes detected!")
+            for change in unexpected_changes[:3]:  # Show first 3
+                update_text_messages(f"  Student {change['id']} (index {change['index']}): {change['before']} → {change['after']} (NOT EXPECTED)")
+        else:
+            update_text_messages("✅ No unexpected status changes detected")
+            
+        update_text_messages(f"✅ All updates finished: {grade_update_count} grades, {status_update_count} statuses")
 
     # # Check for unmatched students and create a log file if necessary
     # if len(unmatched_students) > 0:
