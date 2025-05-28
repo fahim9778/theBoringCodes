@@ -1,3 +1,11 @@
+# 
+# UPDATED: Handle merged StudentID-Name format in Connect Portal
+# - Portal changed from separate "StudentId" and "Student Name" fields to single "Student" field
+# - New format: "StudentID-Name" (e.g., "12345678-John Doe") 
+# - Excel still has separate ID and Name columns, code transforms them for portal matching
+# - Updated placeholder from 'StudentId' to 'Student'
+# - Enhanced matching logic with multiple strategies for reliability
+#
 import tkinter as tk
 from tkinter import ttk  # Import ttk
 from tkinter import filedialog, messagebox, simpledialog
@@ -138,9 +146,9 @@ def check_browser_status():
 def is_student_data_visible():
     """Check if student data is visible on the current page"""
     try:
-        # Check for student ID fields
-        student_id_count = driver.execute_script('return document.querySelectorAll("input[placeholder=\'StudentId\']").length')
-        return student_id_count > 0
+        # Check for student fields with new merged format
+        student_count = driver.execute_script('return document.querySelectorAll("input[placeholder=\'Student\']").length')
+        return student_count > 0
     except Exception as e:
         print(f"Error checking student data: {e}")
         return False
@@ -378,7 +386,7 @@ def process_gradesheet():
     # Get all student data from the page using JavaScript
     update_text_messages("Collecting student data from the page...")
     js_script = """
-    const rows = document.querySelectorAll("input[placeholder='StudentId']");
+    const rows = document.querySelectorAll("input[placeholder='Student']");
     const studentData = [];
     
     // Also get available status options from the first dropdown
@@ -397,13 +405,28 @@ def process_gradesheet():
         }, 300);
     }
 
-    rows.forEach((idInput, index) => {
-      const nameInput = document.querySelectorAll("input[placeholder='Student Name']")[index];
+    rows.forEach((studentInput, index) => {
       const statusSelect = document.querySelectorAll("mat-select")[index];
       
+      // Parse the combined "StudentID-Name" field
+      const studentValue = studentInput?.value || '';
+      let studentId = '';
+      let studentName = '';
+      
+      if (studentValue.includes('-')) {
+        const parts = studentValue.split('-');
+        studentId = parts[0].trim();
+        studentName = parts.slice(1).join('-').trim(); // Handle names with hyphens
+      } else {
+        // Fallback: treat entire value as ID if no hyphen found
+        studentId = studentValue.trim();
+        studentName = 'Unknown';
+      }
+      
       studentData.push({
-        id: idInput?.value,
-        name: nameInput?.value,
+        id: studentId,
+        name: studentName,
+        combinedValue: studentValue, // Store original combined value for reference
         index: index,  // Store the index for later use
         currentStatus: statusSelect?.textContent?.trim() || 'Present'  // Get current status
       });
@@ -451,6 +474,13 @@ def process_gradesheet():
     
     # Create a dictionary for quick lookup by student ID
     portal_students_dict = {student['id']: student for student in portal_students}
+    
+    # Also create a lookup by combined format for better matching
+    portal_combined_dict = {}
+    for student in portal_students:
+        if student['id'] and student['name']:
+            combined_key = f"{student['id']}-{student['name']}"
+            portal_combined_dict[combined_key] = student
     
     # Create a set of Excel student IDs for quick lookups
     excel_student_ids = set()
@@ -503,25 +533,59 @@ def process_gradesheet():
         # Add to our set of Excel student IDs
         excel_student_ids.add(excel_student_id)
 
-        # Look up the student in our dictionary
+        # Create combined format for portal matching (Excel ID + Name)
+        excel_combined = f"{excel_student_id}-{excel_name}"
+        
+        # Try multiple matching strategies
+        matched_student = None
+        match_method = ""
+        
+        # Strategy 1: Direct ID match
         if excel_student_id in portal_students_dict:
-            portal_student = portal_students_dict[excel_student_id]
+            matched_student = portal_students_dict[excel_student_id]
+            match_method = "direct_id"
+        
+        # Strategy 2: Combined format match
+        elif excel_combined in portal_combined_dict:
+            matched_student = portal_combined_dict[excel_combined]
+            match_method = "combined_format"
+        
+        # Strategy 3: Fuzzy matching (case-insensitive, whitespace tolerant)
+        else:
+            for portal_student in portal_students:
+                portal_combined = f"{portal_student['id']}-{portal_student['name']}"
+                
+                # Case-insensitive comparison
+                if excel_combined.lower() == portal_combined.lower():
+                    matched_student = portal_student
+                    match_method = "fuzzy_case"
+                    break
+                
+                # ID-only fallback match
+                if excel_student_id.lower() == portal_student['id'].lower():
+                    matched_student = portal_student
+                    match_method = "fuzzy_id"
+                    break
+
+        if matched_student:
             if has_status_column:
-                update_text_messages(f"Match found for Student ID: {excel_student_id} - Status: {excel_status}, Grade: {excel_grade}")
+                update_text_messages(f"✓ Match found ({match_method}): Excel[{excel_student_id}-{excel_name}] → Portal[{matched_student['id']}-{matched_student['name']}] - Status: {excel_status}, Grade: {excel_grade}")
             else:
-                update_text_messages(f"Match found for Student ID: {excel_student_id} - Grade: {excel_grade}")
+                update_text_messages(f"✓ Match found ({match_method}): Excel[{excel_student_id}-{excel_name}] → Portal[{matched_student['id']}-{matched_student['name']}] - Grade: {excel_grade}")
             
             # Add to the list of students to update (ALL matched students should be updated)
             students_to_update.append({
-                'index': portal_student['index'],
+                'index': matched_student['index'],
                 'id': excel_student_id,
                 'grade': excel_grade,
                 'status': excel_status if has_status_column else None,
-                'name': excel_name
+                'name': excel_name,
+                'portal_id': matched_student['id'],  # Store portal ID for verification
+                'portal_name': matched_student['name']  # Store portal name for verification
             })
         else:
             unmatched_students.append({'sl': excel_sl, 'id': excel_student_id, 'name': excel_name})
-            update_text_messages(f"Student ID {excel_student_id} not found on the portal.", "unmatched")
+            update_text_messages(f"✗ No match found: Excel[{excel_student_id}-{excel_name}]", "unmatched")
     
     # Find students on portal but not in Excel
     for student in portal_students:
@@ -531,46 +595,57 @@ def process_gradesheet():
     
     # Display status summary for debugging (only if status column exists)
     if status_summary and has_status_column:
-        update_text_messages(f"Excel status distribution: {status_summary}")
-    
-    # Validate that our student indexing is correct before proceeding
-    if students_to_update:
-        update_text_messages("Validating student index mapping...")
-        js_validate_indices = """
-        const studentIds = document.querySelectorAll("input[placeholder='StudentId']");
-        const validation = [];
-        
-        studentIds.forEach((input, index) => {
-            validation.push({
-                index: index,
-                id: input.value,
-                name: document.querySelectorAll("input[placeholder='Student Name']")[index]?.value || 'Unknown'
+        update_text_messages(f"Excel status distribution: {status_summary}")        # Validate that our student indexing is correct before proceeding
+        if students_to_update:
+            update_text_messages("Validating student index mapping...")
+            js_validate_indices = """
+            const studentInputs = document.querySelectorAll("input[placeholder='Student']");
+            const validation = [];
+            
+            studentInputs.forEach((input, index) => {
+                const studentValue = input.value || '';
+                let studentId = '';
+                let studentName = '';
+                
+                if (studentValue.includes('-')) {
+                    const parts = studentValue.split('-');
+                    studentId = parts[0].trim();
+                    studentName = parts.slice(1).join('-').trim();
+                } else {
+                    studentId = studentValue.trim();
+                    studentName = 'Unknown';
+                }
+                
+                validation.push({
+                    index: index,
+                    id: studentId,
+                    name: studentName,
+                    combinedValue: studentValue
+                });
             });
-        });
+            
+            return validation;
+            """
         
-        return validation;
-        """
-        
-        portal_validation = driver.execute_script(js_validate_indices)
-        
-        # Check if our students_to_update indices match the portal
+        portal_validation = driver.execute_script(js_validate_indices)            # Check if our students_to_update indices match the portal
         index_mismatches = []
         for student in students_to_update:
             if student['index'] < len(portal_validation):
                 portal_student = portal_validation[student['index']]
-                if portal_student['id'] != student['id']:
+                # Use portal_id for comparison since that's what we'll find on the portal
+                if portal_student['id'] != student['portal_id']:
                     index_mismatches.append({
                         'excel_id': student['id'],
                         'excel_name': student['name'],
                         'portal_id': portal_student['id'],
                         'portal_name': portal_student['name'],
+                        'expected_portal_id': student['portal_id'],
                         'index': student['index']
                     })
-        
         if index_mismatches:
             update_text_messages(f"⚠ WARNING: Found {len(index_mismatches)} index mismatches!")
             for mismatch in index_mismatches[:5]:  # Show first 5 mismatches
-                update_text_messages(f"  Index {mismatch['index']}: Excel has {mismatch['excel_id']} ({mismatch['excel_name']}), Portal has {mismatch['portal_id']} ({mismatch['portal_name']})")
+                update_text_messages(f"  Index {mismatch['index']}: Excel expects portal ID {mismatch['expected_portal_id']}, found {mismatch['portal_id']}")
             
             # Re-map the students based on actual portal order
             update_text_messages("Re-mapping student indices based on portal order...")
@@ -578,12 +653,13 @@ def process_gradesheet():
             
             corrected_students = []
             for student in students_to_update:
-                if student['id'] in portal_dict:
-                    student['index'] = portal_dict[student['id']]
+                # Use portal_id for lookup since that's what should be on the portal
+                if student['portal_id'] in portal_dict:
+                    student['index'] = portal_dict[student['portal_id']]
                     corrected_students.append(student)
-                    update_text_messages(f"Corrected index for {student['id']}: now at index {student['index']}")
+                    update_text_messages(f"Corrected index for Excel ID {student['id']} (Portal ID {student['portal_id']}): now at index {student['index']}")
                 else:
-                    update_text_messages(f"⚠ Student {student['id']} not found in current portal list")
+                    update_text_messages(f"⚠ Portal ID {student['portal_id']} for Excel ID {student['id']} not found in current portal list")
             
             students_to_update = corrected_students
         else:
@@ -600,14 +676,28 @@ def process_gradesheet():
         # CRITICAL: Validate student indices BEFORE any updates
         update_text_messages("🔍 Validating student indices to prevent wrong student updates...")
         js_validate_all = """
-        const studentIds = document.querySelectorAll("input[placeholder='StudentId']");
+        const studentInputs = document.querySelectorAll("input[placeholder='Student']");
         const validation = [];
         
-        studentIds.forEach((input, index) => {
+        studentInputs.forEach((input, index) => {
+            const studentValue = input.value.trim() || '';
+            let studentId = '';
+            let studentName = '';
+            
+            if (studentValue.includes('-')) {
+                const parts = studentValue.split('-');
+                studentId = parts[0].trim();
+                studentName = parts.slice(1).join('-').trim();
+            } else {
+                studentId = studentValue.trim();
+                studentName = 'Unknown';
+            }
+            
             validation.push({
                 index: index,
-                id: input.value.trim(),
-                name: document.querySelectorAll("input[placeholder='Student Name']")[index]?.value?.trim() || 'Unknown'
+                id: studentId,
+                name: studentName,
+                combinedValue: studentValue
             });
         });
         
@@ -621,26 +711,26 @@ def process_gradesheet():
         index_mismatches = 0
         
         for student in students_to_update:
-            # Find the correct index for this student ID
+            # Find the correct index for this student's portal ID
             correct_index = None
             for i, portal_student in enumerate(portal_validation):
-                if portal_student['id'] == student['id']:
+                if portal_student['id'] == student['portal_id']:
                     correct_index = i
                     break
             
             if correct_index is not None:
                 if correct_index != student['index']:
                     index_mismatches += 1
-                    update_text_messages(f"⚠ Index corrected for {student['id']}: {student['index']} → {correct_index}")
+                    update_text_messages(f"⚠ Index corrected for Excel ID {student['id']} (Portal ID {student['portal_id']}): {student['index']} → {correct_index}")
                     student['index'] = correct_index
                 
                 corrected_students.append(student)
                 if has_status_column:
-                    update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}, Status: {student['status']}")
+                    update_text_messages(f"✓ Validated: Excel[{student['id']}-{student['name']}] → Portal[{student['portal_id']}-{student['portal_name']}] at index {student['index']} - Grade: {student['grade']}, Status: {student['status']}")
                 else:
-                    update_text_messages(f"✓ Validated: {student['id']} ({student['name']}) at index {student['index']} - Grade: {student['grade']}")
+                    update_text_messages(f"✓ Validated: Excel[{student['id']}-{student['name']}] → Portal[{student['portal_id']}-{student['portal_name']}] at index {student['index']} - Grade: {student['grade']}")
             else:
-                update_text_messages(f"✗ Student {student['id']} not found in current portal page - SKIPPING")
+                update_text_messages(f"✗ Portal ID {student['portal_id']} for Excel ID {student['id']} not found in current portal page - SKIPPING")
         
         students_to_update = corrected_students
         
@@ -662,16 +752,32 @@ def process_gradesheet():
                 # Double-check the student ID before updating grades
                 js_grade_update = f"""
                 const marksInputs = document.querySelectorAll("input[placeholder='Marks']");
-                const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+                const studentInputs = document.querySelectorAll("input[placeholder='Student']");
                 
                 const targetInput = marksInputs[{student['index']}];
-                const studentIdInput = studentIdInputs[{student['index']}];
+                const studentInput = studentInputs[{student['index']}];
                 
-                // CRITICAL: Verify we're updating the correct student
-                if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
+                if (!studentInput) {{
                     return {{
                         success: false,
-                        error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
+                        error: 'Student input field not found'
+                    }};
+                }}
+                
+                // Extract student ID from combined field
+                const studentValue = studentInput.value.trim();
+                let actualStudentId = '';
+                if (studentValue.includes('-')) {{
+                    actualStudentId = studentValue.split('-')[0].trim();
+                }} else {{
+                    actualStudentId = studentValue.trim();
+                }}
+                
+                // CRITICAL: Verify we're updating the correct student using portal ID
+                if (actualStudentId !== '{student['portal_id']}') {{
+                    return {{
+                        success: false,
+                        error: `SAFETY CHECK FAILED: Expected Portal ID '{student['portal_id']}', found '${{actualStudentId}}' at index {student['index']}`
                     }};
                 }}
                 
@@ -692,7 +798,8 @@ def process_gradesheet():
                     success: true,
                     oldValue: oldValue,
                     newValue: targetInput.value,
-                    studentId: studentIdInput.value.trim()
+                    studentId: actualStudentId,
+                    combinedValue: studentValue
                 }};
                 """
                 
@@ -700,16 +807,16 @@ def process_gradesheet():
                 
                 if grade_result.get('success'):
                     grade_update_count += 1
-                    update_text_messages(f"✓ Grade updated for {student['id']}: {grade_result.get('oldValue', 'empty')} → {student['grade']}")
+                    update_text_messages(f"✓ Grade updated for Excel[{student['id']}] → Portal[{student['portal_id']}]: {grade_result.get('oldValue', 'empty')} → {student['grade']}")
                 else:
-                    update_text_messages(f"✗ Grade update FAILED for {student['id']}: {grade_result.get('error', 'Unknown error')}")
+                    update_text_messages(f"✗ Grade update FAILED for Excel[{student['id']}] → Portal[{student['portal_id']}]: {grade_result.get('error', 'Unknown error')}")
                     continue  # Skip status update if grade update failed
                 
                 # Small delay between individual updates
                 time.sleep(0.3)
                 
             except Exception as e:
-                update_text_messages(f"✗ Exception during grade update for {student['id']}: {str(e)}")
+                update_text_messages(f"✗ Exception during grade update for Excel[{student['id']}] → Portal[{student['portal_id']}]: {str(e)}")
                 continue
         
         update_text_messages(f"📝 Grade updates complete: {grade_update_count}/{len(students_to_update)} successful")
@@ -725,16 +832,26 @@ def process_gradesheet():
             # Capture current status of all students before updates
             js_capture_all_statuses = """
             const statusSelects = document.querySelectorAll("mat-select");
-            const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+            const studentInputs = document.querySelectorAll("input[placeholder='Student']");
             const currentStatuses = [];
             
             statusSelects.forEach((select, index) => {
-                const studentId = studentIdInputs[index]?.value?.trim() || 'UNKNOWN';
+                const studentInput = studentInputs[index];
+                const studentValue = studentInput?.value?.trim() || '';
+                let studentId = '';
+                
+                if (studentValue.includes('-')) {
+                    studentId = studentValue.split('-')[0].trim();
+                } else {
+                    studentId = studentValue.trim();
+                }
+                
                 const currentStatus = select?.textContent?.trim() || 'UNKNOWN';
                 currentStatuses.push({
                     index: index,
                     id: studentId,
-                    status: currentStatus
+                    status: currentStatus,
+                    combinedValue: studentValue
                 });
             });
             
@@ -749,10 +866,10 @@ def process_gradesheet():
                 # Find current status for this student
                 current_status = "UNKNOWN"
                 for status_info in pre_update_statuses:
-                    if status_info['id'] == student['id']:
+                    if status_info['id'] == student['portal_id']:  # Use portal_id for lookup
                         current_status = status_info['status']
                         break
-                update_text_messages(f"  {i+1}. ID: {student['id']}, Current: {current_status} → Target: {student['status']}")
+                update_text_messages(f"  {i+1}. Excel[{student['id']}] → Portal[{student['portal_id']}], Current: {current_status} → Target: {student['status']}")
             if len(students_to_update) > 5:
                 update_text_messages(f"  ... and {len(students_to_update) - 5} more students")
             
@@ -761,16 +878,32 @@ def process_gradesheet():
                     # First check if status update is needed
                     js_status_check = f"""
                     const statusSelects = document.querySelectorAll("mat-select");
-                    const studentIdInputs = document.querySelectorAll("input[placeholder='StudentId']");
+                    const studentInputs = document.querySelectorAll("input[placeholder='Student']");
                     
                     const statusSelect = statusSelects[{student['index']}];
-                    const studentIdInput = studentIdInputs[{student['index']}];
+                    const studentInput = studentInputs[{student['index']}];
                     
-                    // CRITICAL: Verify we're checking the correct student
-                    if (!studentIdInput || studentIdInput.value.trim() !== '{student['id']}') {{
+                    if (!studentInput) {{
                         return {{
                             needsUpdate: false,
-                            error: `SAFETY CHECK FAILED: Expected ID '{student['id']}', found '${{studentIdInput ? studentIdInput.value.trim() : 'NOT_FOUND'}}' at index {student['index']}`
+                            error: 'Student input field not found'
+                        }};
+                    }}
+                    
+                    // Extract student ID from combined field
+                    const studentValue = studentInput.value.trim();
+                    let actualStudentId = '';
+                    if (studentValue.includes('-')) {{
+                        actualStudentId = studentValue.split('-')[0].trim();
+                    }} else {{
+                        actualStudentId = studentValue.trim();
+                    }}
+                    
+                    // CRITICAL: Verify we're checking the correct student using portal ID
+                    if (actualStudentId !== '{student['portal_id']}') {{
+                        return {{
+                            needsUpdate: false,
+                            error: `SAFETY CHECK FAILED: Expected Portal ID '{student['portal_id']}', found '${{actualStudentId}}' at index {student['index']}`
                         }};
                     }}
                     
@@ -788,21 +921,22 @@ def process_gradesheet():
                         needsUpdate: currentStatus !== targetStatus,
                         currentStatus: currentStatus,
                         targetStatus: targetStatus,
-                        studentId: studentIdInput.value.trim()
+                        studentId: actualStudentId,
+                        combinedValue: studentValue
                     }};
                         """
                     
                     status_info = driver.execute_script(js_status_check)
                     
                     if status_info.get('error'):
-                        update_text_messages(f"✗ Status check error for {student['id']}: {status_info['error']}")
+                        update_text_messages(f"✗ Status check error for Excel[{student['id']}] → Portal[{student['portal_id']}]: {status_info['error']}")
                         continue
                     
                     if not status_info.get('needsUpdate'):
-                        update_text_messages(f"- Status already correct for {student['id']}: {student['status']}")
+                        update_text_messages(f"- Status already correct for Excel[{student['id']}] → Portal[{student['portal_id']}]: {student['status']}")
                         continue
                     
-                    update_text_messages(f"🎯 Updating status for {student['id']}: {status_info['currentStatus']} → {student['status']}")
+                    update_text_messages(f"🎯 Updating status for Excel[{student['id']}] → Portal[{student['portal_id']}]: {status_info['currentStatus']} → {student['status']}")
                     
                     # Open dropdown for this specific student
                     js_open_dropdown = f"""
@@ -819,7 +953,7 @@ def process_gradesheet():
                     dropdown_opened = driver.execute_script(js_open_dropdown)
                     
                     if not dropdown_opened:
-                        update_text_messages(f"✗ Failed to open dropdown for {student['id']}")
+                        update_text_messages(f"✗ Failed to open dropdown for Excel[{student['id']}] → Portal[{student['portal_id']}]")
                         continue
                     
                     # Wait for dropdown to open
@@ -842,7 +976,7 @@ def process_gradesheet():
                     
                     reopened = driver.execute_script(js_reopen_dropdown)
                     if not reopened:
-                        update_text_messages(f"✗ Failed to reopen dropdown for {student['id']}")
+                        update_text_messages(f"✗ Failed to reopen dropdown for Excel[{student['id']}] → Portal[{student['portal_id']}]")
                         continue
                 
                     # Wait for options to appear
@@ -939,12 +1073,12 @@ def process_gradesheet():
                         # Double-check that the status was actually set
                         if verification.get('actualStatus') == student['status']:
                             status_update_count += 1
-                            update_text_messages(f"✓ Status VERIFIED for {student['id']}: '{verification['actualStatus']}' (method: {option_result['method']})")
+                            update_text_messages(f"✓ Status VERIFIED for Excel[{student['id']}] → Portal[{student['portal_id']}]: '{verification['actualStatus']}' (method: {option_result['method']})")
                         else:
-                            update_text_messages(f"⚠ Status mismatch for {student['id']}: Expected '{student['status']}', got '{verification.get('actualStatus', 'UNKNOWN')}'")
+                            update_text_messages(f"⚠ Status mismatch for Excel[{student['id']}] → Portal[{student['portal_id']}]: Expected '{student['status']}', got '{verification.get('actualStatus', 'UNKNOWN')}'")
                             
                             # Attempt one retry for status correction
-                            update_text_messages(f"🔄 Retrying status update for {student['id']}...")
+                            update_text_messages(f"🔄 Retrying status update for Excel[{student['id']}] → Portal[{student['portal_id']}]...")
                             
                             # Close any open dropdowns
                             driver.execute_script("document.body.click();")
@@ -970,13 +1104,13 @@ def process_gradesheet():
                                 final_verification = driver.execute_script(js_verify_status)
                                 if final_verification.get('actualStatus') == student['status']:
                                     status_update_count += 1
-                                    update_text_messages(f"✓ Status CORRECTED on retry for {student['id']}: '{final_verification['actualStatus']}'")
+                                    update_text_messages(f"✓ Status CORRECTED on retry for Excel[{student['id']}] → Portal[{student['portal_id']}]: '{final_verification['actualStatus']}'")
                                 else:
-                                    update_text_messages(f"✗ Status retry failed for {student['id']}: Still showing '{final_verification.get('actualStatus', 'UNKNOWN')}'")
+                                    update_text_messages(f"✗ Status retry failed for Excel[{student['id']}] → Portal[{student['portal_id']}]: Still showing '{final_verification.get('actualStatus', 'UNKNOWN')}'")
                             else:
-                                update_text_messages(f"✗ Failed to reopen dropdown for retry on {student['id']}")
+                                update_text_messages(f"✗ Failed to reopen dropdown for retry on Excel[{student['id']}] → Portal[{student['portal_id']}]")
                     else:
-                        update_text_messages(f"✗ Status update failed for {student['id']}. Target: '{student['status']}', Available: {option_result.get('availableOptions', [])}")
+                        update_text_messages(f"✗ Status update failed for Excel[{student['id']}] → Portal[{student['portal_id']}]. Target: '{student['status']}', Available: {option_result.get('availableOptions', [])}")
                     
                     # Ensure any dropdowns are closed before moving to next student
                     driver.execute_script("document.body.click();")
@@ -986,7 +1120,7 @@ def process_gradesheet():
                     time.sleep(1.5)
                     
                 except Exception as e:
-                    update_text_messages(f"✗ Exception during status update for {student['id']}: {str(e)}")
+                    update_text_messages(f"✗ Exception during status update for Excel[{student['id']}] → Portal[{student['portal_id']}]: {str(e)}")
             
             update_text_messages(f"🎯 Status updates complete: {status_update_count}/{len(students_to_update)} successful")
             
@@ -1005,8 +1139,8 @@ def process_gradesheet():
                         break
                 
                 if post_status:
-                    # Check if this student was supposed to be updated
-                    was_target = any(s['id'] == pre_status['id'] for s in students_to_update)
+                    # Check if this student was supposed to be updated (use portal_id for lookup)
+                    was_target = any(s['portal_id'] == pre_status['id'] for s in students_to_update)
                     
                     if not was_target and pre_status['status'] != post_status['status']:
                         # This student wasn't supposed to change but did
