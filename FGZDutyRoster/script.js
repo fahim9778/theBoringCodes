@@ -1,4 +1,6 @@
 
+const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTIBMlIbnvEfecFbrdQ_1Wxz-2XcGn1XDswoZPwsR3_2_ChYQmcE8ubFDtft5dkJ4dqZde9xOPU5DVI/pub?output=csv";
+
 function updateTime() {
   const now = new Date();
   document.getElementById("currentTime").innerText = now.toLocaleTimeString([], {
@@ -10,7 +12,7 @@ setInterval(updateTime, 1000);
 updateTime();
 
 function fetchAndUpdateRoster() {
-  Papa.parse("https://docs.google.com/spreadsheets/d/e/2PACX-1vTIBMlIbnvEfecFbrdQ_1Wxz-2XcGn1XDswoZPwsR3_2_ChYQmcE8ubFDtft5dkJ4dqZde9xOPU5DVI/pub?output=csv", {
+  Papa.parse(GOOGLE_SHEET_CSV_URL, {
     download: true,
     header: true,
     complete: function(results) {
@@ -21,17 +23,47 @@ function fetchAndUpdateRoster() {
       const now = new Date();
       let ongoing = null, next = null, allToday = [];
 
+      // Helper functions to avoid redeclaration
+      function getStartTime(row) {
+        const dateParts = row["Date"].split("-");
+        const [startStr] = row["Time"].split("-");
+        const day = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const year = parseInt(dateParts[2], 10);
+        const classDate = new Date(year, month, day);
+        return new Date(`${classDate.toDateString()} ${startStr}`);
+      }
+
+      function getEndTime(row) {
+        const dateParts = row["Date"].split("-");
+        const [, endStr] = row["Time"].split("-");
+        const day = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const year = parseInt(dateParts[2], 10);
+        const classDate = new Date(year, month, day);
+        return new Date(`${classDate.toDateString()} ${endStr}`);
+      }
+
+      function getClassDate(row) {
+        const dateParts = row["Date"].split("-");
+        const day = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const year = parseInt(dateParts[2], 10);
+        return new Date(year, month, day);
+      }
+
       rows.forEach(r => {
-        const dateParts = r["Date"].split("-");
-        const [startStr, endStr] = r["Time"].split("-");
-        const classDate = new Date(`${dateParts[2]}-${dateParts[1]}-${dateParts[0]}`);
-        const startTime = new Date(`${classDate.toDateString()} ${startStr}`);
-        const endTime = new Date(`${classDate.toDateString()} ${endStr}`);
+        const startTime = getStartTime(r);
+        const endTime = getEndTime(r);
+        const classDate = getClassDate(r);
 
         if (now >= startTime && now <= endTime) {
           ongoing = r;
         }
-        if (now < startTime && (!next || startTime < new Date(`${next["Date"].split("-")[2]}-${next["Date"].split("-")[1]}-${next["Date"].split("-")[0]} ${next["Time"].split("-")[0]}`))) {
+        if (
+          now < startTime &&
+          (!next || startTime < getStartTime(next))
+        ) {
           next = r;
         }
         if (now.toDateString() === classDate.toDateString()) {
